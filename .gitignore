@@ -1,4 +1,5 @@
-# Exclude ComfyUI portable
+Add:
+gitignore# Exclude ComfyUI portable
 ComfyUI_windows_portable/
 
 # Exclude build artifacts
