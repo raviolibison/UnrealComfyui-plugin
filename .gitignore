@@ -1,0 +1,10 @@
+# Exclude ComfyUI portable
+ComfyUI_windows_portable/
+
+# Exclude build artifacts
+Intermediate/
+Binaries/
+
+# IDE
+.vs/
+.idea/
