@@ -277,11 +277,27 @@ void UComfyUIBlueprintLibrary::SubmitWorkflowJson(const FString& WorkflowJson, c
 
 FString UComfyUIBlueprintLibrary::GetComfyUIOutputFolder()
 {
-    if (const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("ComfyUI")))
+    const UComfyUISettings* Settings = GetDefault<UComfyUISettings>();
+
+    FString OutputFolder;
+
+    // Use PortableRoot from settings if available
+    if (Settings && !Settings->PortableRoot.IsEmpty())
     {
-        return FPaths::Combine(Plugin->GetBaseDir(), TEXT("ComfyUI_windows_portable/ComfyUI/output"));
+        OutputFolder = FPaths::Combine(Settings->PortableRoot, TEXT("ComfyUI/output"));
     }
-    return TEXT("");
+    else
+    {
+        // Fallback to plugin directory
+        if (const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("ComfyUI")))
+        {
+            OutputFolder = FPaths::Combine(Plugin->GetBaseDir(), TEXT("ComfyUI_windows_portable/ComfyUI/output"));
+        }
+    }
+
+    UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Output folder path: %s"), *OutputFolder);
+
+    return OutputFolder;
 }
 
 UTexture2D* UComfyUIBlueprintLibrary::LoadImageFromFile(const FString& FilePath)
