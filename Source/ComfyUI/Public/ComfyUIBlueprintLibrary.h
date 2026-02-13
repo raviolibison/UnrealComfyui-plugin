@@ -11,10 +11,8 @@ class COMFYUI_API UComfyUIBlueprintLibrary : public UBlueprintFunctionLibrary
     GENERATED_BODY()
 
 public:
-    // Watch for workflow completion via WebSocket
-    UFUNCTION(BlueprintCallable, Category = "ComfyUI")
-    static void WatchWorkflowCompletion(const FString& PromptId, const FComfyUIWorkflowCompleteDelegate& OnComplete);
-    
+    // --- Lifecycle ---
+
     UFUNCTION(BlueprintCallable, Category = "ComfyUI")
     static bool EnsurePortableRunning();
 
@@ -24,36 +22,44 @@ public:
     UFUNCTION(BlueprintCallable, Category = "ComfyUI")
     static void WaitForComfyUIReady(float TimeoutSeconds, const FComfyUIResponseDelegate& OnComplete);
 
+    // --- Workflow Submission ---
+
     UFUNCTION(BlueprintCallable, Category = "ComfyUI")
     static void SubmitWorkflowJson(const FString& WorkflowJson, const FComfyUISubmitOptions& Options, const FComfyUIResponseDelegate& OnComplete);
+
+    // --- Workflow Builders ---
+
+    UFUNCTION(BlueprintCallable, Category = "ComfyUI")
+    static FString BuildSimpleWorkflowJson(const FComfyUISimpleWorkflowParams& Params);
 
     UFUNCTION(BlueprintCallable, Category = "ComfyUI")
     static FString BuildFlux2WorkflowJson(const FComfyUIFlux2WorkflowParams& Params);
 
-    // Generate unique asset name with timestamp
-    UFUNCTION(BlueprintPure, Category = "ComfyUI")
-    static FString GenerateUniqueAssetName(const FString& BasePath, const FString& Prefix);
+    // --- Image Loading ---
 
-    // Get the ComfyUI output folder path
-    UFUNCTION(BlueprintPure, Category = "ComfyUI")
-    static FString GetComfyUIOutputFolder();
-
-    // Load image from file as runtime texture (temporary)
     UFUNCTION(BlueprintCallable, Category = "ComfyUI")
     static UTexture2D* LoadImageFromFile(const FString& FilePath);
 
+    UFUNCTION(BlueprintPure, Category = "ComfyUI")
+    static FString GetComfyUIOutputFolder();
 
-    // Import image as permanent asset in Content Browser
-    UFUNCTION(BlueprintCallable, Category = "ComfyUI")
-    static UTexture2D* ImportImageAsAsset(const FString& SourceFilePath, const FString& DestinationPath);
-
-    // Get the latest image file from ComfyUI output folder
     UFUNCTION(BlueprintCallable, Category = "ComfyUI")
     static FString GetLatestOutputImage(const FString& FilenamePrefix);
 
+    UFUNCTION(BlueprintCallable, Category = "ComfyUI", meta = (DisplayName = "Import Image As Asset"))
+    static UTexture2D* ImportImageAsAsset(const FString& SourceFilePath, const FString& DestAssetPath);
+
+    UFUNCTION(BlueprintPure, Category = "ComfyUI")
+    static FString GenerateUniqueAssetName(const FString& BasePath, const FString& BaseName);
+
+    // --- WebSocket / Monitoring ---
+
+    UFUNCTION(BlueprintCallable, Category = "ComfyUI")
+    static void WatchWorkflowCompletion(const FString& PromptId, const FComfyUIWorkflowCompleteDelegate& OnComplete);
 
 private:
+    static FString GetBaseUrl();
+    static void TryEnsurePortable();
     static FString BuildPromptWrapperJson(const TSharedPtr<FJsonObject>& PromptObject, const FString& ClientId);
-
     static void PollComfyUIReady(float TimeoutSeconds, float ElapsedTime, const FComfyUIResponseDelegate& OnComplete);
 };

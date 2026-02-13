@@ -1,33 +1,32 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "UObject/Object.h"
+#include "Engine/DeveloperSettings.h"
 #include "ComfyUISettings.generated.h"
 
-UCLASS(Config = Engine, DefaultConfig)
-class COMFYUI_API UComfyUISettings : public UObject
+UCLASS(config = Game, defaultconfig, meta = (DisplayName = "ComfyUI"))
+class COMFYUI_API UComfyUISettings : public UDeveloperSettings
 {
     GENERATED_BODY()
 
 public:
-    UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "ComfyUI")
+    UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Connection",
+        meta = (DisplayName = "Base URL"))
     FString BaseUrl = TEXT("http://127.0.0.1:8188");
 
-    UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "ComfyUI|Portable")
+    UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Portable",
+        meta = (DisplayName = "Auto Start Portable"))
     bool bAutoStartPortable = false;
 
-    UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "ComfyUI|Portable", meta = (EditCondition = "bAutoStartPortable"))
+    UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Portable",
+        meta = (DisplayName = "Portable Root Path"))
     FString PortableRoot;
 
-    UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "ComfyUI|Portable", meta = (EditCondition = "bAutoStartPortable"))
-    FString PortableExecutable = TEXT("python");
+    UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Portable",
+        meta = (DisplayName = "Portable Executable"))
+    FString PortableExecutable = TEXT("run_nvidia_gpu.bat");
 
-    UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "ComfyUI|Portable", meta = (EditCondition = "bAutoStartPortable"))
-    FString PortableArgs = TEXT("main.py --listen 127.0.0.1 --port 8188");
-
-    UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "ComfyUI")
-    FString DefaultCheckpoint;
-
-    UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "ComfyUI")
-    TArray<FString> DefaultLoras;
+    UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Portable",
+        meta = (DisplayName = "Portable Arguments"))
+    FString PortableArgs;
 };

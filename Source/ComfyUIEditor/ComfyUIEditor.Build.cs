@@ -1,8 +1,8 @@
 using UnrealBuildTool;
 
-public class ComfyUI : ModuleRules
+public class ComfyUIEditor : ModuleRules
 {
-    public ComfyUI(ReadOnlyTargetRules Target) : base(Target)
+    public ComfyUIEditor(ReadOnlyTargetRules Target) : base(Target)
     {
         PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 
@@ -12,19 +12,23 @@ public class ComfyUI : ModuleRules
                 "Core",
                 "CoreUObject",
                 "Engine",
-                "HTTP",
-                "Json",
-                "JsonUtilities",
-                "WebSockets"
+                "ComfyUI"
             }
         );
 
         PrivateDependencyModuleNames.AddRange(
             new string[]
             {
-                "Settings",
+                "Slate",
+                "SlateCore",
+                "UnrealEd",
+                "ToolMenus",
+                "WorkspaceMenuStructure",
+                "InputCore",
                 "ImageWrapper",
-                "RenderCore"
+                "HTTP",
+                "Json",
+                "JsonUtilities"
             }
         );
     }

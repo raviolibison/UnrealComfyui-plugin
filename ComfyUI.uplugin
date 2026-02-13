@@ -1,16 +1,21 @@
 {
   "FileVersion": 3,
   "Version": 1,
-  "VersionName": "0.1.0",
+  "VersionName": "0.2.0",
   "FriendlyName": "ComfyUI",
-  "Description": "Blueprint-friendly ComfyUI integration for image generation.",
+  "Description": "ComfyUI integration for Unreal Engine - generate images directly from the editor.",
   "Category": "Rendering",
-  "CreatedBy": "OpenAI",
+  "CreatedBy": "raviolibison",
   "Modules": [
     {
       "Name": "ComfyUI",
       "Type": "Runtime",
       "LoadingPhase": "PostConfigInit"
+    },
+    {
+      "Name": "ComfyUIEditor",
+      "Type": "Editor",
+      "LoadingPhase": "PostEngineInit"
     }
   ]
 }

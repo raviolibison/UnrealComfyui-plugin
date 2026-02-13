@@ -105,6 +105,12 @@ struct FComfyUISubmitOptions
     FString ClientId;
 };
 
+// Delegates
+DECLARE_DYNAMIC_DELEGATE_TwoParams(FComfyUIResponseDelegate, bool, bSuccess, const FString&, ResponseJson);
 
-DECLARE_DYNAMIC_DELEGATE_ThreeParams(FComfyUIResponseDelegate, bool, bSuccess, const FString&, ResponseJson, const FString&, PromptId);
+// Dynamic delegate for Blueprint-exposed workflow completion
 DECLARE_DYNAMIC_DELEGATE_TwoParams(FComfyUIWorkflowCompleteDelegate, bool, bSuccess, const FString&, PromptId);
+
+// Non-dynamic delegates for C++ internal use (editor panel, websocket)
+DECLARE_DELEGATE_ThreeParams(FComfyUIResponseDelegateNative, bool /*bSuccess*/, const FString& /*ResponseJson*/, const FString& /*PromptId*/);
+DECLARE_DELEGATE_TwoParams(FComfyUIWorkflowCompleteDelegateNative, bool /*bSuccess*/, const FString& /*PromptId*/);
