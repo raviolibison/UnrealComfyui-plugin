@@ -15,9 +15,7 @@
 #include "Widgets/Layout/SSpacer.h"
 #include "Widgets/Images/SImage.h"
 #include "Styling/AppStyle.h"
-#include "Brushes/SlateImageBrush.h"
-#include "IImageWrapper.h"
-#include "IImageWrapperModule.h"
+#include "Editor.h" 
 
 #define LOCTEXT_NAMESPACE "SComfyUIPanel"
 
@@ -25,15 +23,17 @@ void SComfyUIPanel::Construct(const FArguments& InArgs)
 {
     // Initialize resolution options
     ResolutionOptions.Add(MakeShared<FString>(TEXT("512x512")));
-    ResolutionOptions.Add(MakeShared<FString>(TEXT("768x768")));
-    ResolutionOptions.Add(MakeShared<FString>(TEXT("1024x576")));
     ResolutionOptions.Add(MakeShared<FString>(TEXT("1024x1024")));
     ResolutionOptions.Add(MakeShared<FString>(TEXT("1280x720")));
     ResolutionOptions.Add(MakeShared<FString>(TEXT("1920x1080")));
-    SelectedResolution = ResolutionOptions[5]; // Default 1920x1080
+    SelectedResolution = ResolutionOptions[3]; 
 
-    StatusText = TEXT("Ready");
+    StatusText = TEXT("Offline");
     CurrentFilenamePrefix = TEXT("UE_Editor");
+    
+    // Initial State: Reset connection attempts so we do a single passive check
+    ConnectionAttempts = 0; 
+    PollComfyConnection();
 
     ChildSlot
     [
@@ -43,31 +43,65 @@ void SComfyUIPanel::Construct(const FArguments& InArgs)
         [
             SNew(SVerticalBox)
 
-            // Title
+            // --- HEADER: Server Control ---
             + SVerticalBox::Slot()
             .AutoHeight()
-            .Padding(0, 0, 0, 10)
+            .Padding(0, 0, 0, 15)
             [
-                SNew(STextBlock)
-                .Text(LOCTEXT("Title", "ComfyUI Image Generator"))
-                .Font(FCoreStyle::GetDefaultFontStyle("Bold", 16))
-            ]
+                SNew(SHorizontalBox)
+                
+                // Start Button
+                + SHorizontalBox::Slot()
+                .AutoWidth()
+                [
+                    SNew(SButton)
+                    .Text_Lambda([this]() { 
+                        return bIsComfyReady ? LOCTEXT("ServerRunning", "ComfyUI Running") : LOCTEXT("StartServer", "Start ComfyUI"); 
+                    })
+                    .OnClicked(this, &SComfyUIPanel::OnStartComfyClicked)
+                    .IsEnabled_Lambda([this](){ return !bIsComfyReady; }) // Disable if already running
+                ]
 
-            // Positive Prompt
+                // Status Dot
+                + SHorizontalBox::Slot()
+                .AutoWidth()
+                .Padding(10, 0, 0, 0)
+                .VAlign(VAlign_Center)
+                [
+                    SNew(STextBlock)
+                    .Text(FText::FromString(TEXT("\u25CF"))) // Circle character
+                    .Font(FCoreStyle::GetDefaultFontStyle("Regular", 24))
+                    .ColorAndOpacity_Lambda([this]() {
+                        return bIsComfyReady ? FLinearColor::Green : FLinearColor::Red;
+                    })
+                    .ToolTipText_Lambda([this](){
+                         return bIsComfyReady ? LOCTEXT("OnlineTooltip", "Server is Online") : LOCTEXT("OfflineTooltip", "Server is Offline");
+                    })
+                ]
+            ]
+            
+            // Divider
             + SVerticalBox::Slot()
             .AutoHeight()
             .Padding(0, 5)
             [
-                SNew(STextBlock)
-                .Text(LOCTEXT("PromptLabel", "Prompt:"))
+                SNew(SSpacer)
+                .Size(FVector2D(0, 10))
+            ]
+
+            // --- PROMPT SECTION ---
+            + SVerticalBox::Slot()
+            .AutoHeight()
+            [
+                SNew(STextBlock).Text(LOCTEXT("PromptLabel", "Prompt:"))
             ]
 
             + SVerticalBox::Slot()
             .AutoHeight()
-            .Padding(0, 0, 0, 10)
+            .Padding(0, 5, 0, 10)
             [
                 SNew(SEditableTextBox)
-                .HintText(LOCTEXT("PromptHint", "Describe the image you want to generate..."))
+                .HintText(LOCTEXT("PromptHint", "Describe the image..."))
                 .OnTextChanged(this, &SComfyUIPanel::OnPromptTextChanged)
                 .MinDesiredWidth(400)
             ]
@@ -75,98 +109,78 @@ void SComfyUIPanel::Construct(const FArguments& InArgs)
             // Negative Prompt
             + SVerticalBox::Slot()
             .AutoHeight()
-            .Padding(0, 5)
             [
-                SNew(STextBlock)
-                .Text(LOCTEXT("NegativePromptLabel", "Negative Prompt (Optional):"))
+                SNew(STextBlock).Text(LOCTEXT("NegPromptLabel", "Negative Prompt:"))
             ]
 
             + SVerticalBox::Slot()
             .AutoHeight()
-            .Padding(0, 0, 0, 10)
+            .Padding(0, 5, 0, 10)
             [
                 SNew(SEditableTextBox)
-                .HintText(LOCTEXT("NegativePromptHint", "What to avoid in the image..."))
+                .HintText(LOCTEXT("NegPromptHint", "What to avoid..."))
                 .OnTextChanged(this, &SComfyUIPanel::OnNegativePromptTextChanged)
-                .MinDesiredWidth(400)
             ]
 
-            // Resolution Dropdown
+            // Resolution
             + SVerticalBox::Slot()
             .AutoHeight()
             .Padding(0, 5)
             [
                 SNew(SHorizontalBox)
-
-                + SHorizontalBox::Slot()
-                .AutoWidth()
-                .VAlign(VAlign_Center)
+                + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
                 [
-                    SNew(STextBlock)
-                    .Text(LOCTEXT("ResolutionLabel", "Resolution:"))
+                    SNew(STextBlock).Text(LOCTEXT("ResLabel", "Resolution: "))
                 ]
-
-                + SHorizontalBox::Slot()
-                .Padding(10, 0, 0, 0)
-                .AutoWidth()
+                + SHorizontalBox::Slot().Padding(10, 0, 0, 0).AutoWidth()
                 [
                     SNew(SComboBox<TSharedPtr<FString>>)
                     .OptionsSource(&ResolutionOptions)
                     .OnSelectionChanged(this, &SComfyUIPanel::OnResolutionChanged)
-                    .OnGenerateWidget_Lambda([](TSharedPtr<FString> Item)
-                    {
+                    .OnGenerateWidget_Lambda([](TSharedPtr<FString> Item) {
                         return SNew(STextBlock).Text(FText::FromString(*Item));
                     })
                     .InitiallySelectedItem(SelectedResolution)
                     [
-                        SNew(STextBlock)
-                        .Text_Lambda([this]()
-                        {
-                            return SelectedResolution.IsValid() ?
-                                FText::FromString(*SelectedResolution) :
-                                FText::FromString(TEXT("Select..."));
-                        })
+                        SNew(STextBlock).Text_Lambda([this](){ return FText::FromString(*SelectedResolution); })
                     ]
                 ]
             ]
 
-            // Generate Button
+            // --- GENERATE BUTTON ---
             + SVerticalBox::Slot()
             .AutoHeight()
-            .Padding(0, 15, 0, 10)
+            .Padding(0, 20, 0, 10)
             [
                 SNew(SButton)
                 .Text(LOCTEXT("GenerateButton", "Generate Image"))
                 .OnClicked(this, &SComfyUIPanel::OnGenerateClicked)
                 .HAlign(HAlign_Center)
+                .IsEnabled_Lambda([this]() { return bIsComfyReady; }) // <--- LOCKED UNTIL CONNECTED
             ]
 
-            // Status Text
+            // Status Bar
             + SVerticalBox::Slot()
             .AutoHeight()
-            .Padding(0, 10)
+            .Padding(0, 5)
             [
                 SNew(STextBlock)
                 .Text_Lambda([this]() { return FText::FromString(StatusText); })
-                .ColorAndOpacity_Lambda([this]()
-                {
-                    if (StatusText.Contains(TEXT("Error")))
-                        return FLinearColor::Red;
-                    if (StatusText.Contains(TEXT("Generating")) || StatusText.Contains(TEXT("Waiting")))
-                        return FLinearColor::Yellow;
-                    if (StatusText.Contains(TEXT("Complete")))
-                        return FLinearColor::Green;
+                .Justification(ETextJustify::Center)
+                .ColorAndOpacity_Lambda([this]() {
+                    // Simple color logic
+                    if (StatusText.Contains("Error") || StatusText.Contains("Offline")) return FLinearColor::Red;
+                    if (StatusText.Contains("Generating") || StatusText.Contains("Waiting") || StatusText.Contains("Launching")) return FLinearColor::Yellow;
                     return FLinearColor::White;
                 })
             ]
 
-            // Image Preview
+            // Preview
             + SVerticalBox::Slot()
             .FillHeight(1.0f)
             .Padding(0, 10)
             [
                 SAssignNew(PreviewImage, SImage)
-                .Image(FAppStyle::GetBrush("Checkerboard"))
             ]
         ]
     ];
@@ -191,105 +205,164 @@ void SComfyUIPanel::OnResolutionChanged(TSharedPtr<FString> NewSelection, ESelec
     SelectedResolution = NewSelection;
 }
 
-FReply SComfyUIPanel::OnGenerateClicked()
+FReply SComfyUIPanel::OnStartComfyClicked()
 {
-    if (PromptText.IsEmpty())
+    // 1. Launch the process
+    if (FComfyUIModule* Module = FModuleManager::GetModulePtr<FComfyUIModule>(TEXT("ComfyUI")))
     {
-        UpdateStatus(TEXT("Error: Please enter a prompt"));
-        return FReply::Handled();
+        if (Module->EnsurePortableRunning())
+        {
+            UpdateStatus(TEXT("Launching ComfyUI..."));
+            
+            // 2. Start polling. We set attempts to 1 to signal "User triggered this", so we want to loop/retry.
+            ConnectionAttempts = 1;
+            PollComfyConnection();
+        }
+        else
+        {
+            UpdateStatus(TEXT("Error: Failed to launch ComfyUI (Check logs/paths)"));
+        }
     }
+    return FReply::Handled();
+}
 
-    UpdateStatus(TEXT("Checking ComfyUI..."));
-
-    // Check if ComfyUI is ready via direct HTTP
+void SComfyUIPanel::PollComfyConnection()
+{
+    // Simply ping the server to check status
     TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
     const UComfyUISettings* Settings = GetDefault<UComfyUISettings>();
     FString BaseUrl = Settings ? Settings->BaseUrl : TEXT("http://127.0.0.1:8188");
+    
     Request->SetURL(BaseUrl + TEXT("/system_stats"));
     Request->SetVerb(TEXT("GET"));
+    Request->SetTimeout(1.0f); // Fast timeout
 
     Request->OnProcessRequestComplete().BindLambda(
-        [this, BaseUrl](FHttpRequestPtr, FHttpResponsePtr Response, bool bSucceeded)
+        [this](FHttpRequestPtr, FHttpResponsePtr Response, bool bSucceeded)
     {
-        if (!bSucceeded || !Response.IsValid() || !EHttpResponseCodes::IsOk(Response->GetResponseCode()))
+        if (bSucceeded && Response.IsValid() && EHttpResponseCodes::IsOk(Response->GetResponseCode()))
         {
-            UpdateStatus(TEXT("Error: ComfyUI not ready"));
+            // SUCCESS: Connected
+            bIsComfyReady = true;
+            UpdateStatus(TEXT("Connected: ComfyUI is Ready"));
             return;
         }
 
-        // Build workflow
-        int32 Width, Height;
-        GetResolutionFromString(*SelectedResolution, Width, Height);
+        // FAILED: Not ready yet
+        bIsComfyReady = false;
 
-        FComfyUIFlux2WorkflowParams Params;
-        Params.PositivePrompt = PromptText;
-        Params.NegativePrompt = NegativePromptText;
-        Params.Width = Width;
-        Params.Height = Height;
-        Params.FilenamePrefix = CurrentFilenamePrefix;
-
-        FString WorkflowJson = UComfyUIBlueprintLibrary::BuildFlux2WorkflowJson(Params);
-
-        UpdateStatus(TEXT("Submitting workflow..."));
-
-        // Build prompt wrapper
-        TSharedPtr<FJsonObject> PromptObject;
-        const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(WorkflowJson);
-        FJsonSerializer::Deserialize(Reader, PromptObject);
-
-        TSharedPtr<FJsonObject> Wrapper = MakeShared<FJsonObject>();
-        Wrapper->SetObjectField(TEXT("prompt"), PromptObject);
-
-        FString RequestBody;
-        const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&RequestBody);
-        FJsonSerializer::Serialize(Wrapper.ToSharedRef(), Writer);
-
-        // Submit workflow via direct HTTP
-        TSharedRef<IHttpRequest, ESPMode::ThreadSafe> SubmitRequest = FHttpModule::Get().CreateRequest();
-        SubmitRequest->SetURL(BaseUrl + TEXT("/prompt"));
-        SubmitRequest->SetVerb(TEXT("POST"));
-        SubmitRequest->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
-        SubmitRequest->SetContentAsString(RequestBody);
-
-        SubmitRequest->OnProcessRequestComplete().BindLambda(
-            [this](FHttpRequestPtr, FHttpResponsePtr SubmitResponse, bool bSubmitSucceeded)
+        // RETRY LOGIC:
+        // If ConnectionAttempts > 0, it means the User clicked "Start", so we actively retry.
+        // If ConnectionAttempts == 0, it was just the passive check on window open, so we don't loop.
+        if (ConnectionAttempts > 0 && ConnectionAttempts < 30) 
         {
-            if (!bSubmitSucceeded || !SubmitResponse.IsValid() || !EHttpResponseCodes::IsOk(SubmitResponse->GetResponseCode()))
+            ConnectionAttempts++;
+            UpdateStatus(FString::Printf(TEXT("Waiting for ComfyUI... (%ds)"), ConnectionAttempts));
+            
+            if (GEditor)
             {
-                UpdateStatus(TEXT("Error: Failed to submit workflow"));
-                return;
+                GEditor->GetTimerManager()->SetTimer(
+                    ConnectionTimerHandle,
+                    FTimerDelegate::CreateRaw(this, &SComfyUIPanel::PollComfyConnection),
+                    1.0f, 
+                    false
+                );
             }
-
-            // Parse prompt_id
-            TSharedPtr<FJsonObject> JsonResponse;
-            const TSharedRef<TJsonReader<>> JsonReader = TJsonReaderFactory<>::Create(SubmitResponse->GetContentAsString());
-            if (FJsonSerializer::Deserialize(JsonReader, JsonResponse) && JsonResponse.IsValid())
-            {
-                CurrentPromptId = JsonResponse->GetStringField(TEXT("prompt_id"));
-            }
-
-            UpdateStatus(TEXT("Generating image..."));
-
-            // Watch for completion via WebSocket
-            FComfyUIWorkflowCompleteDelegateNative CompleteDelegate;
-            CompleteDelegate.BindRaw(this, &SComfyUIPanel::OnGenerationComplete);
-
-            if (FComfyUIModule* Module = FModuleManager::GetModulePtr<FComfyUIModule>(TEXT("ComfyUI")))
-            {
-                TSharedPtr<FComfyUIWebSocketHandler> WSHandler = Module->GetWebSocketHandler();
-                if (WSHandler.IsValid())
-                {
-                    WSHandler->WatchPrompt(CurrentPromptId, CompleteDelegate);
-                }
-            }
-        });
-
-        SubmitRequest->ProcessRequest();
+        }
+        else if (ConnectionAttempts >= 30)
+        {
+             UpdateStatus(TEXT("Error: Timed out connecting to ComfyUI"));
+             ConnectionAttempts = 0; // Reset
+        }
+        else 
+        {
+             // Just a passive check failed (Window opened, server wasn't running)
+             StatusText = TEXT("Server Offline");
+        }
     });
 
     Request->ProcessRequest();
+}
 
+FReply SComfyUIPanel::OnGenerateClicked()
+{
+    StartGeneration();
     return FReply::Handled();
+}
+
+void SComfyUIPanel::StartGeneration()
+{
+    UpdateStatus(TEXT("Submitting workflow..."));
+
+    const UComfyUISettings* Settings = GetDefault<UComfyUISettings>();
+    FString BaseUrl = Settings ? Settings->BaseUrl : TEXT("http://127.0.0.1:8188");
+
+    int32 Width, Height;
+    GetResolutionFromString(*SelectedResolution, Width, Height);
+
+    FComfyUIFlux2WorkflowParams Params;
+    Params.PositivePrompt = PromptText;
+    Params.NegativePrompt = NegativePromptText;
+    Params.Width = Width;
+    Params.Height = Height;
+    Params.FilenamePrefix = CurrentFilenamePrefix;
+
+    // Build the JSON for the workflow
+    FString WorkflowJson = UComfyUIBlueprintLibrary::BuildFlux2WorkflowJson(Params);
+
+    // Prepare JSON wrapper {"prompt": ...}
+    TSharedPtr<FJsonObject> PromptObject;
+    const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(WorkflowJson);
+    FJsonSerializer::Deserialize(Reader, PromptObject);
+
+    TSharedPtr<FJsonObject> Wrapper = MakeShared<FJsonObject>();
+    Wrapper->SetObjectField(TEXT("prompt"), PromptObject);
+
+    FString RequestBody;
+    const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&RequestBody);
+    FJsonSerializer::Serialize(Wrapper.ToSharedRef(), Writer);
+
+    // Submit via HTTP
+    TSharedRef<IHttpRequest, ESPMode::ThreadSafe> SubmitRequest = FHttpModule::Get().CreateRequest();
+    SubmitRequest->SetURL(BaseUrl + TEXT("/prompt"));
+    SubmitRequest->SetVerb(TEXT("POST"));
+    SubmitRequest->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
+    SubmitRequest->SetContentAsString(RequestBody);
+
+    SubmitRequest->OnProcessRequestComplete().BindLambda(
+        [this](FHttpRequestPtr, FHttpResponsePtr SubmitResponse, bool bSubmitSucceeded)
+    {
+        if (!bSubmitSucceeded || !SubmitResponse.IsValid() || !EHttpResponseCodes::IsOk(SubmitResponse->GetResponseCode()))
+        {
+            UpdateStatus(TEXT("Error: Failed to submit workflow"));
+            return;
+        }
+
+        // Extract Prompt ID
+        TSharedPtr<FJsonObject> JsonResponse;
+        const TSharedRef<TJsonReader<>> JsonReader = TJsonReaderFactory<>::Create(SubmitResponse->GetContentAsString());
+        if (FJsonSerializer::Deserialize(JsonReader, JsonResponse) && JsonResponse.IsValid())
+        {
+            CurrentPromptId = JsonResponse->GetStringField(TEXT("prompt_id"));
+        }
+
+        UpdateStatus(TEXT("Generating image..."));
+
+        // Bind WebSocket listener
+        FComfyUIWorkflowCompleteDelegateNative CompleteDelegate;
+        CompleteDelegate.BindRaw(this, &SComfyUIPanel::OnGenerationComplete);
+
+        if (FComfyUIModule* Module = FModuleManager::GetModulePtr<FComfyUIModule>(TEXT("ComfyUI")))
+        {
+            TSharedPtr<FComfyUIWebSocketHandler> WSHandler = Module->GetWebSocketHandler();
+            if (WSHandler.IsValid())
+            {
+                WSHandler->WatchPrompt(CurrentPromptId, CompleteDelegate);
+            }
+        }
+    });
+
+    SubmitRequest->ProcessRequest();
 }
 
 // ============================================================================
@@ -298,25 +371,11 @@ FReply SComfyUIPanel::OnGenerateClicked()
 
 void SComfyUIPanel::OnWorkflowSubmitted(bool bSuccess, const FString& ResponseJson, const FString& PromptId)
 {
+    // Note: This function is kept for compatibility but logic is handled inside StartGeneration lambda
     if (!bSuccess)
     {
         UpdateStatus(TEXT("Error: Failed to submit workflow"));
         return;
-    }
-
-    CurrentPromptId = PromptId;
-    UpdateStatus(TEXT("Generating image..."));
-
-    FComfyUIWorkflowCompleteDelegateNative CompleteDelegate;
-    CompleteDelegate.BindRaw(this, &SComfyUIPanel::OnGenerationComplete);
-
-    if (FComfyUIModule* Module = FModuleManager::GetModulePtr<FComfyUIModule>(TEXT("ComfyUI")))
-    {
-        TSharedPtr<FComfyUIWebSocketHandler> WSHandler = Module->GetWebSocketHandler();
-        if (WSHandler.IsValid())
-        {
-            WSHandler->WatchPrompt(PromptId, CompleteDelegate);
-        }
     }
 }
 

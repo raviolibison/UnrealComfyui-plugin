@@ -15,7 +15,9 @@ public class ComfyUI : ModuleRules
                 "HTTP",
                 "Json",
                 "JsonUtilities",
-                "WebSockets"
+                "WebSockets",
+                "Projects",
+                "DeveloperSettings"
             }
         );
 
@@ -27,5 +29,10 @@ public class ComfyUI : ModuleRules
                 "RenderCore"
             }
         );
+
+        if (Target.bBuildEditor)
+        {
+            PrivateDependencyModuleNames.AddRange(new string[]{"UnrealEd"});
+        }
     }
 }

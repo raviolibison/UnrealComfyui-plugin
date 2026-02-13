@@ -5,7 +5,7 @@
 
 class FComfyUIWebSocketHandler;
 
-class FComfyUIModule final : public IModuleInterface
+class COMFYUI_API FComfyUIModule final : public IModuleInterface
 {
 public:
     virtual void StartupModule() override;

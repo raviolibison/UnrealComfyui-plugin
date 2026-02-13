@@ -15,23 +15,7 @@ void FComfyUIModule::StartupModule()
 
     // Create WebSocket handler
     WebSocketHandler = MakeShared<FComfyUIWebSocketHandler>();
-
-#if WITH_EDITOR
-    // Defer settings registration until the Settings module is available
-    FCoreDelegates::OnPostEngineInit.AddLambda([this]()
-    {
-        if (ISettingsModule* SettingsModule = FModuleManager::GetModulePtr<ISettingsModule>("Settings"))
-        {
-            SettingsModule->RegisterSettings(
-                "Project", "Plugins", "ComfyUI",
-                FText::FromString(TEXT("ComfyUI")),
-                FText::FromString(TEXT("Configure ComfyUI integration settings")),
-                GetMutableDefault<UComfyUISettings>()
-            );
-            UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Settings registered"));
-        }
-    });
-#endif
+    
 }
 
 void FComfyUIModule::ShutdownModule()
@@ -49,52 +33,92 @@ void FComfyUIModule::ShutdownModule()
         FPlatformProcess::TerminateProc(PortableHandle);
         PortableHandle.Reset();
     }
-
-#if WITH_EDITOR
-    if (ISettingsModule* SettingsModule = FModuleManager::GetModulePtr<ISettingsModule>("Settings"))
-    {
-        SettingsModule->UnregisterSettings("Project", "Plugins", "ComfyUI");
-    }
-#endif
 }
 
 bool FComfyUIModule::EnsurePortableRunning()
 {
+    // 1. If already running, do nothing
     if (PortableHandle.IsValid() && FPlatformProcess::IsProcRunning(PortableHandle))
     {
         return true;
     }
 
+    // 2. Check settings
     const UComfyUISettings* Settings = GetDefault<UComfyUISettings>();
     if (!Settings || !Settings->bAutoStartPortable)
     {
         return false;
     }
 
-    FString WorkingDir = Settings->PortableRoot;
-    if (WorkingDir.IsEmpty())
-    {
-        if (const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("ComfyUI")))
-        {
-            WorkingDir = FPaths::Combine(Plugin->GetBaseDir(), TEXT("ComfyUIPortable"));
-        }
-        else
-        {
-            WorkingDir = FPaths::ProjectDir();
-        }
-    }
-
-    const FString Executable = Settings->PortableExecutable;
-    const FString Arguments = Settings->PortableArgs;
-
+    FString Executable = Settings->PortableExecutable; // e.g., "start_from_unreal.bat"
     if (Executable.IsEmpty())
     {
         return false;
     }
 
+    FString WorkingDir = Settings->PortableRoot;
+    FString FullExecutablePath;
+
+    // 3. Logic to find the file
+    // A. If the user manually set a path in Project Settings, respect it absolutely.
+    if (!WorkingDir.IsEmpty())
+    {
+        FullExecutablePath = FPaths::Combine(WorkingDir, Executable);
+    }
+    // B. Otherwise, auto-detect the folder inside the Plugin directory
+    else if (const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("ComfyUI")))
+    {
+        FString PluginDir = Plugin->GetBaseDir();
+        
+        // List of common folder names to check
+        TArray<FString> CandidateFolders;
+        CandidateFolders.Add(TEXT("ComfyUIPortable"));
+        CandidateFolders.Add(TEXT("ComfyUI_windows_portable"));
+        CandidateFolders.Add(TEXT("ComfyUI"));
+        
+        bool bFound = false;
+
+        // Check specific folders first
+        for (const FString& FolderName : CandidateFolders)
+        {
+            FString TestDir = FPaths::Combine(PluginDir, FolderName);
+            FString TestExe = FPaths::Combine(TestDir, Executable);
+
+            if (FPaths::FileExists(TestExe))
+            {
+                WorkingDir = TestDir;
+                FullExecutablePath = TestExe;
+                bFound = true;
+                UE_LOG(LogTemp, Log, TEXT("ComfyUI: Auto-detected installation at: %s"), *WorkingDir);
+                break;
+            }
+        }
+
+        // C. Fallback: Search the entire plugin directory recursively
+        if (!bFound)
+        {
+             TArray<FString> FoundFiles;
+             IFileManager::Get().FindFilesRecursive(FoundFiles, *PluginDir, *Executable, true, false);
+             if (FoundFiles.Num() > 0)
+             {
+                 FullExecutablePath = FoundFiles[0]; // First match
+                 WorkingDir = FPaths::GetPath(FullExecutablePath);
+                 UE_LOG(LogTemp, Log, TEXT("ComfyUI: Found executable via search at: %s"), *FullExecutablePath);
+             }
+        }
+    }
+
+    // 4. Validation
+    if (WorkingDir.IsEmpty() || !FPaths::FileExists(FullExecutablePath))
+    {
+        UE_LOG(LogTemp, Error, TEXT("ComfyUI: Could not find '%s' in Plugin directory. Please check your folder structure or Project Settings."), *Executable);
+        return false;
+    }
+
+    // 5. Launch
     PortableHandle = FPlatformProcess::CreateProc(
-        *Executable,
-        *Arguments,
+        *FullExecutablePath,
+        *Settings->PortableArgs,
         true, false, false,
         nullptr, 0,
         *WorkingDir,

@@ -18,6 +18,8 @@ private:
     FString PromptText;
     FString NegativePromptText;
     FString StatusText;
+    bool bIsComfyReady = false; // <--- This was likely missing!
+
     TSharedPtr<class SImage> PreviewImage;
     TSharedPtr<FSlateBrush> ImageBrush;
 
@@ -25,8 +27,16 @@ private:
     TArray<TSharedPtr<FString>> ResolutionOptions;
     TSharedPtr<FString> SelectedResolution;
 
+    // Polling & Connection Logic
+    int32 ConnectionAttempts = 0;
+    FTimerHandle ConnectionTimerHandle;
+    void PollComfyConnection();
+    void StartGeneration(); // <--- This declaration is required for the .cpp to work
+
     // UI Callbacks
+    FReply OnStartComfyClicked(); // <--- This too
     FReply OnGenerateClicked();
+    
     void OnPromptTextChanged(const FText& NewText);
     void OnNegativePromptTextChanged(const FText& NewText);
     void OnResolutionChanged(TSharedPtr<FString> NewSelection, ESelectInfo::Type SelectInfo);

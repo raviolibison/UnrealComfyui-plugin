@@ -24,7 +24,7 @@ public:
 
     UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Portable",
         meta = (DisplayName = "Portable Executable"))
-    FString PortableExecutable = TEXT("run_nvidia_gpu.bat");
+    FString PortableExecutable = TEXT("start_from_unreal.bat");
 
     UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Portable",
         meta = (DisplayName = "Portable Arguments"))
