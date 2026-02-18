@@ -339,7 +339,7 @@ FString UComfyUIBlueprintLibrary::BuildFlux2WorkflowJson(const FComfyUIFlux2Work
     // CLIPLoader
     auto ClipNode = MakeNode(TEXT("CLIPLoader"));
     SetInputString(ClipNode, TEXT("clip_name"), Params.ClipName);
-    SetInputString(ClipNode, TEXT("type"), TEXT("flux"));
+    SetInputString(ClipNode, TEXT("type"), TEXT("flux2"));
     Graph->SetObjectField(FString::FromInt(ClipId), ClipNode);
 
     // VAELoader
@@ -381,8 +381,9 @@ FString UComfyUIBlueprintLibrary::BuildFlux2WorkflowJson(const FComfyUIFlux2Work
 
     // Flux2Scheduler
     auto SchedulerNode = MakeNode(TEXT("Flux2Scheduler"));
-    SetInputLink(SchedulerNode, TEXT("model"), UnetId, 0);
     SetInputNumber(SchedulerNode, TEXT("steps"), Params.Steps);
+    SetInputNumber(SchedulerNode, TEXT("width"), Params.Width);  
+    SetInputNumber(SchedulerNode, TEXT("height"), Params.Height);
     Graph->SetObjectField(FString::FromInt(SchedulerId), SchedulerNode);
 
     // SamplerCustomAdvanced

@@ -235,7 +235,7 @@ void SComfyUIPanel::PollComfyConnection()
     
     Request->SetURL(BaseUrl + TEXT("/system_stats"));
     Request->SetVerb(TEXT("GET"));
-    Request->SetTimeout(1.0f); // Fast timeout
+    Request->SetTimeout(3.0f); // Fast timeout
 
     Request->OnProcessRequestComplete().BindLambda(
         [this](FHttpRequestPtr, FHttpResponsePtr Response, bool bSucceeded)
