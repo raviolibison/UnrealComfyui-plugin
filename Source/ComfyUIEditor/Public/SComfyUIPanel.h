@@ -52,7 +52,6 @@ private:
     
     void OnPromptTextChanged(const FText& NewText);
     void OnNegativePromptTextChanged(const FText& NewText);
-    void OnResolutionChanged(TSharedPtr<FString> NewSelection, ESelectInfo::Type SelectInfo);
 
     // Generation callbacks
     void OnWorkflowSubmitted(bool bSuccess, const FString& ResponseJson, const FString& PromptId);
@@ -61,7 +60,6 @@ private:
     // Helper functions
     void UpdateStatus(const FString& Status);
     void LoadAndDisplayImage(const FString& FilePath);
-    void GetResolutionFromString(const FString& ResString, int32& OutWidth, int32& OutHeight);
 
     // Current generation state
     FString CurrentPromptId;
