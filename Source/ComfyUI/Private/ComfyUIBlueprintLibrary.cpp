@@ -14,6 +14,7 @@
 #include "TextureResource.h"
 #include "TimerManager.h"
 #include "Engine/Engine.h"
+#include "Interfaces/IPluginManager.h"
 
 #if WITH_EDITOR
 #include "AssetRegistry/AssetRegistryModule.h"
@@ -374,9 +375,11 @@ FString UComfyUIBlueprintLibrary::BuildFlux2WorkflowJson(const FComfyUIFlux2Work
     SetInputNumber(LatentNode, TEXT("batch_size"), 1);
     Graph->SetObjectField(FString::FromInt(LatentId), LatentNode);
 
-    // RandomNoise
+    /// RandomNoise
     auto NoiseNode = MakeNode(TEXT("RandomNoise"));
-    SetInputNumber(NoiseNode, TEXT("noise_seed"), Params.Seed >= 0 ? Params.Seed : FMath::RandRange(0, MAX_int32));
+    int32 ActualSeed = Params.Seed >= 0 ? Params.Seed : FMath::RandRange(0, MAX_int32);
+    UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Building workflow with seed: %d (Params.Seed was: %d)"), ActualSeed, Params.Seed);
+    SetInputNumber(NoiseNode, TEXT("noise_seed"), ActualSeed);
     Graph->SetObjectField(FString::FromInt(NoiseId), NoiseNode);
 
     // Flux2Scheduler
@@ -435,10 +438,34 @@ FString UComfyUIBlueprintLibrary::GetComfyUIOutputFolder()
 
     if (Root.IsEmpty())
     {
+        UE_LOG(LogTemp, Error, TEXT("ComfyUI: PortableRoot is empty in settings!"));
+        
+        // Try to auto-detect
+        if (const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("ComfyUI")))
+        {
+            FString PluginDir = Plugin->GetBaseDir();
+            TArray<FString> CandidateFolders;
+            CandidateFolders.Add(TEXT("ComfyUI_windows_portable"));
+            CandidateFolders.Add(TEXT("ComfyUIPortable"));
+            CandidateFolders.Add(TEXT("ComfyUI"));
+            
+            for (const FString& Folder : CandidateFolders)
+            {
+                FString TestPath = FPaths::Combine(PluginDir, Folder, TEXT("ComfyUI"), TEXT("output"));
+                if (FPaths::DirectoryExists(TestPath))
+                {
+                    UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Auto-detected output folder: %s"), *TestPath);
+                    return TestPath;
+                }
+            }
+        }
+        
         return TEXT("");
     }
 
-    return FPaths::Combine(Root, TEXT("ComfyUI"), TEXT("output"));
+    FString OutputPath = FPaths::Combine(Root, TEXT("ComfyUI"), TEXT("output"));
+    UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Output folder: %s"), *OutputPath);
+    return OutputPath;
 }
 
 UTexture2D* UComfyUIBlueprintLibrary::LoadImageFromFile(const FString& FilePath)
@@ -493,29 +520,54 @@ FString UComfyUIBlueprintLibrary::GetLatestOutputImage(const FString& FilenamePr
     FString OutputFolder = GetComfyUIOutputFolder();
     if (OutputFolder.IsEmpty())
     {
+        UE_LOG(LogTemp, Error, TEXT("ComfyUI: Output folder is empty!"));
+        return TEXT("");
+    }
+
+    if (!FPaths::DirectoryExists(OutputFolder))
+    {
+        UE_LOG(LogTemp, Error, TEXT("ComfyUI: Output folder does not exist: %s"), *OutputFolder);
         return TEXT("");
     }
 
     TArray<FString> Files;
     IFileManager::Get().FindFiles(Files, *FPaths::Combine(OutputFolder, TEXT("*.png")), true, false);
 
+    UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Found %d PNG files in output folder"), Files.Num());
+    UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Looking for prefix: '%s'"), *FilenamePrefix);
+
     FString LatestFile;
     FDateTime LatestTime = FDateTime::MinValue();
 
     for (const FString& File : Files)
     {
+        UE_LOG(LogTemp, Log, TEXT("ComfyUI: Checking file: %s"), *File);
+        
         if (!FilenamePrefix.IsEmpty() && !File.StartsWith(FilenamePrefix))
         {
+            UE_LOG(LogTemp, Log, TEXT("ComfyUI: Skipping (prefix mismatch): %s"), *File);
             continue;
         }
 
         FString FullPath = FPaths::Combine(OutputFolder, File);
         FDateTime ModTime = IFileManager::Get().GetTimeStamp(*FullPath);
+        
+        UE_LOG(LogTemp, Log, TEXT("ComfyUI: File time: %s - %s"), *File, *ModTime.ToString());
+        
         if (ModTime > LatestTime)
         {
             LatestTime = ModTime;
             LatestFile = FullPath;
         }
+    }
+
+    if (LatestFile.IsEmpty())
+    {
+        UE_LOG(LogTemp, Error, TEXT("ComfyUI: No matching files found!"));
+    }
+    else
+    {
+        UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Latest file: %s"), *LatestFile);
     }
 
     return LatestFile;

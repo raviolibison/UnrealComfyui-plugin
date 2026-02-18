@@ -44,11 +44,6 @@ bool FComfyUIWebSocketHandler::IsConnected() const
     return bIsConnected;
 }
 
-void FComfyUIWebSocketHandler::WatchPrompt(const FString& PromptId, const FComfyUIWorkflowCompleteDelegateNative& Callback)
-{
-    PromptCallbacks.Add(PromptId, Callback);
-}
-
 void FComfyUIWebSocketHandler::OnConnected()
 {
     UE_LOG(LogTemp, Warning, TEXT("ComfyUI WebSocket: Connected"));
@@ -78,24 +73,45 @@ void FComfyUIWebSocketHandler::OnMessage(const FString& Message)
 
     FString Type = JsonObject->GetStringField(TEXT("type"));
 
-    if (Type == TEXT("executed"))
+    // Use queue_remaining status as the completion signal
+    if (Type == TEXT("status"))
     {
         const TSharedPtr<FJsonObject>* DataObject;
         if (JsonObject->TryGetObjectField(TEXT("data"), DataObject))
         {
-            FString PromptId;
-            if ((*DataObject)->TryGetStringField(TEXT("prompt_id"), PromptId))
+            const TSharedPtr<FJsonObject>* StatusObject;
+            if ((*DataObject)->TryGetObjectField(TEXT("status"), StatusObject))  // Fixed: added closing quote
             {
-                UE_LOG(LogTemp, Warning, TEXT("ComfyUI WebSocket: Prompt completed - %s"), *PromptId);
-
-                if (FComfyUIWorkflowCompleteDelegateNative* Callback = PromptCallbacks.Find(PromptId))
+                const TSharedPtr<FJsonObject>* ExecInfoObject;
+                if ((*StatusObject)->TryGetObjectField(TEXT("exec_info"), ExecInfoObject))
                 {
-                    Callback->ExecuteIfBound(true, PromptId);
-                    PromptCallbacks.Remove(PromptId);
+                    int32 QueueRemaining = (*ExecInfoObject)->GetIntegerField(TEXT("queue_remaining"));
+                    
+                    // When queue empties, trigger all pending callbacks
+                    if (QueueRemaining == 0 && PromptCallbacks.Num() > 0)
+                    {
+                        UE_LOG(LogTemp, Warning, TEXT("ComfyUI WebSocket: Queue complete, triggering %d callback(s)"), PromptCallbacks.Num());
+                        
+                        // Trigger all pending callbacks
+                        TArray<FString> CompletedPrompts;
+                        for (auto& Pair : PromptCallbacks)
+                        {
+                            UE_LOG(LogTemp, Warning, TEXT("ComfyUI WebSocket: Executing callback for prompt %s"), *Pair.Key);
+                            Pair.Value.ExecuteIfBound(true, Pair.Key);
+                            CompletedPrompts.Add(Pair.Key);
+                        }
+                        
+                        // Clear all callbacks
+                        for (const FString& PromptId : CompletedPrompts)
+                        {
+                            PromptCallbacks.Remove(PromptId);
+                        }
+                    }
                 }
             }
         }
     }
+    // Handle errors
     else if (Type == TEXT("execution_error"))
     {
         const TSharedPtr<FJsonObject>* DataObject;
@@ -114,4 +130,10 @@ void FComfyUIWebSocketHandler::OnMessage(const FString& Message)
             }
         }
     }
+}
+
+void FComfyUIWebSocketHandler::WatchPrompt(const FString& PromptId, const FComfyUIWorkflowCompleteDelegateNative& Callback)
+{
+    PromptCallbacks.Add(PromptId, Callback);
+    UE_LOG(LogTemp, Warning, TEXT("ComfyUI WebSocket: Registered watcher for prompt %s (total watchers: %d)"), *PromptId, PromptCallbacks.Num());
 }

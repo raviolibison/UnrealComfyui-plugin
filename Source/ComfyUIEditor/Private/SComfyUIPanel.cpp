@@ -15,21 +15,35 @@
 #include "Widgets/Layout/SSpacer.h"
 #include "Widgets/Images/SImage.h"
 #include "Styling/AppStyle.h"
-#include "Editor.h" 
+#include "Editor.h"
+#include "Widgets/Input/SNumericEntryBox.h"
 
 #define LOCTEXT_NAMESPACE "SComfyUIPanel"
 
 void SComfyUIPanel::Construct(const FArguments& InArgs)
 {
-    // Initialize resolution options
-    ResolutionOptions.Add(MakeShared<FString>(TEXT("512x512")));
-    ResolutionOptions.Add(MakeShared<FString>(TEXT("1024x1024")));
-    ResolutionOptions.Add(MakeShared<FString>(TEXT("1280x720")));
-    ResolutionOptions.Add(MakeShared<FString>(TEXT("1920x1080")));
-    SelectedResolution = ResolutionOptions[3]; 
-
+    // Initialize width options
+    WidthOptions.Add(MakeShared<FString>(TEXT("512")));
+    WidthOptions.Add(MakeShared<FString>(TEXT("768")));
+    WidthOptions.Add(MakeShared<FString>(TEXT("1024")));
+    WidthOptions.Add(MakeShared<FString>(TEXT("1280")));
+    WidthOptions.Add(MakeShared<FString>(TEXT("1920")));
+    WidthOptions.Add(MakeShared<FString>(TEXT("Custom")));
+    SelectedWidth = WidthOptions[2]; // Default to 1024
+    
+    // Initialize height options
+    HeightOptions.Add(MakeShared<FString>(TEXT("512")));
+    HeightOptions.Add(MakeShared<FString>(TEXT("768")));
+    HeightOptions.Add(MakeShared<FString>(TEXT("1024")));
+    HeightOptions.Add(MakeShared<FString>(TEXT("720")));
+    HeightOptions.Add(MakeShared<FString>(TEXT("1080")));
+    HeightOptions.Add(MakeShared<FString>(TEXT("Custom")));
+    SelectedHeight = HeightOptions[2]; // Default to 1024
+    
     StatusText = TEXT("Offline");
     CurrentFilenamePrefix = TEXT("UE_Editor");
+
+    WeakThis = SharedThis(this);
     
     // Initial State: Reset connection attempts so we do a single passive check
     ConnectionAttempts = 0; 
@@ -122,7 +136,7 @@ void SComfyUIPanel::Construct(const FArguments& InArgs)
                 .OnTextChanged(this, &SComfyUIPanel::OnNegativePromptTextChanged)
             ]
 
-            // Resolution
+            // Width
             + SVerticalBox::Slot()
             .AutoHeight()
             .Padding(0, 5)
@@ -130,20 +144,69 @@ void SComfyUIPanel::Construct(const FArguments& InArgs)
                 SNew(SHorizontalBox)
                 + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
                 [
-                    SNew(STextBlock).Text(LOCTEXT("ResLabel", "Resolution: "))
+                    SNew(STextBlock).Text(LOCTEXT("WidthLabel", "Width: "))
                 ]
                 + SHorizontalBox::Slot().Padding(10, 0, 0, 0).AutoWidth()
                 [
                     SNew(SComboBox<TSharedPtr<FString>>)
-                    .OptionsSource(&ResolutionOptions)
-                    .OnSelectionChanged(this, &SComfyUIPanel::OnResolutionChanged)
+                    .OptionsSource(&WidthOptions)
+                    .OnSelectionChanged(this, &SComfyUIPanel::OnWidthChanged)
                     .OnGenerateWidget_Lambda([](TSharedPtr<FString> Item) {
                         return SNew(STextBlock).Text(FText::FromString(*Item));
                     })
-                    .InitiallySelectedItem(SelectedResolution)
+                    .InitiallySelectedItem(SelectedWidth)
                     [
-                        SNew(STextBlock).Text_Lambda([this](){ return FText::FromString(*SelectedResolution); })
+                        SNew(STextBlock).Text_Lambda([this](){ return FText::FromString(*SelectedWidth); })
                     ]
+                ]
+                + SHorizontalBox::Slot().Padding(10, 0, 0, 0).AutoWidth()
+                [
+                    SNew(SNumericEntryBox<int32>)
+                    .Visibility_Lambda([this]() { 
+                        return (*SelectedWidth == TEXT("Custom")) ? EVisibility::Visible : EVisibility::Collapsed; 
+                    })
+                    .Value_Lambda([this]() { return TOptional<int32>(CustomWidth); })
+                    .OnValueChanged(this, &SComfyUIPanel::OnCustomWidthChanged)
+                    .MinValue(64)
+                    .MaxValue(8192)
+                    .MinDesiredValueWidth(100)
+                ]
+            ]
+            
+            // Height
+            + SVerticalBox::Slot()
+            .AutoHeight()
+            .Padding(0, 5)
+            [
+                SNew(SHorizontalBox)
+                + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
+                [
+                    SNew(STextBlock).Text(LOCTEXT("HeightLabel", "Height: "))
+                ]
+                + SHorizontalBox::Slot().Padding(10, 0, 0, 0).AutoWidth()
+                [
+                    SNew(SComboBox<TSharedPtr<FString>>)
+                    .OptionsSource(&HeightOptions)
+                    .OnSelectionChanged(this, &SComfyUIPanel::OnHeightChanged)
+                    .OnGenerateWidget_Lambda([](TSharedPtr<FString> Item) {
+                        return SNew(STextBlock).Text(FText::FromString(*Item));
+                    })
+                    .InitiallySelectedItem(SelectedHeight)
+                    [
+                        SNew(STextBlock).Text_Lambda([this](){ return FText::FromString(*SelectedHeight); })
+                    ]
+                ]
+                + SHorizontalBox::Slot().Padding(10, 0, 0, 0).AutoWidth()
+                [
+                    SNew(SNumericEntryBox<int32>)
+                    .Visibility_Lambda([this]() { 
+                        return (*SelectedHeight == TEXT("Custom")) ? EVisibility::Visible : EVisibility::Collapsed; 
+                    })
+                    .Value_Lambda([this]() { return TOptional<int32>(CustomHeight); })
+                    .OnValueChanged(this, &SComfyUIPanel::OnCustomHeightChanged)
+                    .MinValue(64)
+                    .MaxValue(8192)
+                    .MinDesiredValueWidth(100)
                 ]
             ]
 
@@ -157,6 +220,17 @@ void SComfyUIPanel::Construct(const FArguments& InArgs)
                 .OnClicked(this, &SComfyUIPanel::OnGenerateClicked)
                 .HAlign(HAlign_Center)
                 .IsEnabled_Lambda([this]() { return bIsComfyReady; }) // <--- LOCKED UNTIL CONNECTED
+            ]
+            // --- IMPORT BUTTON ---
+            + SVerticalBox::Slot()
+            .AutoHeight()
+            .Padding(0, 10, 0, 10)
+            [
+                SNew(SButton)
+                .Text(LOCTEXT("ImportButton", "Import to Project"))
+                .OnClicked(this, &SComfyUIPanel::OnImportClicked)
+                .HAlign(HAlign_Center)
+                .IsEnabled_Lambda([this]() { return !CurrentPreviewImagePath.IsEmpty(); })  // Only enabled when preview exists
             ]
 
             // Status Bar
@@ -179,8 +253,49 @@ void SComfyUIPanel::Construct(const FArguments& InArgs)
             + SVerticalBox::Slot()
             .FillHeight(1.0f)
             .Padding(0, 10)
+            .HAlign(HAlign_Center)
+            .VAlign(VAlign_Center)
             [
-                SAssignNew(PreviewImage, SImage)
+                SNew(SBox)
+                .WidthOverride_Lambda([this]() -> FOptionalSize
+                {
+                    if (ImageBrush.IsValid() && ImageBrush->GetResourceObject())
+                    {
+                        const FVector2D ImageSize = ImageBrush->ImageSize;
+                        if (ImageSize.X > 0 && ImageSize.Y > 0)
+                        {
+                            const float MaxWidth = 800.0f;
+                            const float MaxHeight = 600.0f;
+                            
+                            float Scale = FMath::Min(MaxWidth / ImageSize.X, MaxHeight / ImageSize.Y);
+                            Scale = FMath::Min(Scale, 1.0f);
+                            
+                            return FOptionalSize(ImageSize.X * Scale);
+                        }
+                    }
+                    return FOptionalSize();
+                })
+                .HeightOverride_Lambda([this]() -> FOptionalSize
+                {
+                    if (ImageBrush.IsValid() && ImageBrush->GetResourceObject())
+                    {
+                        const FVector2D ImageSize = ImageBrush->ImageSize;
+                        if (ImageSize.X > 0 && ImageSize.Y > 0)
+                        {
+                            const float MaxWidth = 800.0f;
+                            const float MaxHeight = 600.0f;
+                            
+                            float Scale = FMath::Min(MaxWidth / ImageSize.X, MaxHeight / ImageSize.Y);
+                            Scale = FMath::Min(Scale, 1.0f);
+                            
+                            return FOptionalSize(ImageSize.Y * Scale);
+                        }
+                    }
+                    return FOptionalSize();
+                })
+                [
+                    SAssignNew(PreviewImage, SImage)
+                ]
             ]
         ]
     ];
@@ -200,10 +315,6 @@ void SComfyUIPanel::OnNegativePromptTextChanged(const FText& NewText)
     NegativePromptText = NewText.ToString();
 }
 
-void SComfyUIPanel::OnResolutionChanged(TSharedPtr<FString> NewSelection, ESelectInfo::Type SelectInfo)
-{
-    SelectedResolution = NewSelection;
-}
 
 FReply SComfyUIPanel::OnStartComfyClicked()
 {
@@ -297,8 +408,10 @@ void SComfyUIPanel::StartGeneration()
     const UComfyUISettings* Settings = GetDefault<UComfyUISettings>();
     FString BaseUrl = Settings ? Settings->BaseUrl : TEXT("http://127.0.0.1:8188");
 
-    int32 Width, Height;
-    GetResolutionFromString(*SelectedResolution, Width, Height);
+    
+    // Get width and height from dropdowns/custom inputs
+    int32 Width = (*SelectedWidth == TEXT("Custom")) ? CustomWidth : FCString::Atoi(**SelectedWidth);
+    int32 Height = (*SelectedHeight == TEXT("Custom")) ? CustomHeight : FCString::Atoi(**SelectedHeight);
 
     FComfyUIFlux2WorkflowParams Params;
     Params.PositivePrompt = PromptText;
@@ -307,10 +420,14 @@ void SComfyUIPanel::StartGeneration()
     Params.Height = Height;
     Params.FilenamePrefix = CurrentFilenamePrefix;
 
-    // Build the JSON for the workflow
+    int32 UniqueSeed = FMath::Abs(FDateTime::Now().GetTicks() % MAX_int32);
+    Params.Seed = UniqueSeed;
+
+    UE_LOG(LogTemp, Warning, TEXT("ComfyUI Panel: Set Params.Seed to: %d"), Params.Seed);
+
+    // Build the JSON
     FString WorkflowJson = UComfyUIBlueprintLibrary::BuildFlux2WorkflowJson(Params);
 
-    // Prepare JSON wrapper {"prompt": ...}
     TSharedPtr<FJsonObject> PromptObject;
     const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(WorkflowJson);
     FJsonSerializer::Deserialize(Reader, PromptObject);
@@ -322,19 +439,20 @@ void SComfyUIPanel::StartGeneration()
     const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&RequestBody);
     FJsonSerializer::Serialize(Wrapper.ToSharedRef(), Writer);
 
-    // Submit via HTTP
     TSharedRef<IHttpRequest, ESPMode::ThreadSafe> SubmitRequest = FHttpModule::Get().CreateRequest();
     SubmitRequest->SetURL(BaseUrl + TEXT("/prompt"));
     SubmitRequest->SetVerb(TEXT("POST"));
     SubmitRequest->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
     SubmitRequest->SetContentAsString(RequestBody);
 
+    // Capture BaseUrl in the lambda
     SubmitRequest->OnProcessRequestComplete().BindLambda(
-        [this](FHttpRequestPtr, FHttpResponsePtr SubmitResponse, bool bSubmitSucceeded)
+        [this, BaseUrl](FHttpRequestPtr, FHttpResponsePtr SubmitResponse, bool bSubmitSucceeded)
     {
         if (!bSubmitSucceeded || !SubmitResponse.IsValid() || !EHttpResponseCodes::IsOk(SubmitResponse->GetResponseCode()))
         {
             UpdateStatus(TEXT("Error: Failed to submit workflow"));
+            UE_LOG(LogTemp, Error, TEXT("ComfyUI Panel: Workflow submission failed"));
             return;
         }
 
@@ -344,25 +462,145 @@ void SComfyUIPanel::StartGeneration()
         if (FJsonSerializer::Deserialize(JsonReader, JsonResponse) && JsonResponse.IsValid())
         {
             CurrentPromptId = JsonResponse->GetStringField(TEXT("prompt_id"));
+            UE_LOG(LogTemp, Warning, TEXT("ComfyUI Panel: Submitted workflow with prompt_id: %s"), *CurrentPromptId);
+        }
+        else
+        {
+            UpdateStatus(TEXT("Error: Failed to parse prompt_id"));
+            UE_LOG(LogTemp, Error, TEXT("ComfyUI Panel: Could not parse prompt_id from response"));
+            return;
         }
 
         UpdateStatus(TEXT("Generating image..."));
 
         // Bind WebSocket listener
         FComfyUIWorkflowCompleteDelegateNative CompleteDelegate;
-        CompleteDelegate.BindRaw(this, &SComfyUIPanel::OnGenerationComplete);
+        CompleteDelegate.BindSP(SharedThis(this), &SComfyUIPanel::OnGenerationComplete);
 
         if (FComfyUIModule* Module = FModuleManager::GetModulePtr<FComfyUIModule>(TEXT("ComfyUI")))
         {
             TSharedPtr<FComfyUIWebSocketHandler> WSHandler = Module->GetWebSocketHandler();
             if (WSHandler.IsValid())
             {
-                WSHandler->WatchPrompt(CurrentPromptId, CompleteDelegate);
+                if (WSHandler->IsConnected())
+                {
+                    UE_LOG(LogTemp, Warning, TEXT("ComfyUI Panel: WebSocket is connected, watching prompt %s"), *CurrentPromptId);
+                    WSHandler->WatchPrompt(CurrentPromptId, CompleteDelegate);
+                }
+                else
+                {
+                    UE_LOG(LogTemp, Warning, TEXT("ComfyUI Panel: WebSocket NOT connected, attempting to connect..."));
+                    
+                    // Try to connect WebSocket
+                    FString WsUrl = BaseUrl.Replace(TEXT("http://"), TEXT("ws://")).Replace(TEXT("https://"), TEXT("wss://"));
+                    WsUrl += TEXT("/ws");
+                    WSHandler->Connect(WsUrl);
+                    
+                    // Register watcher anyway - it should work once connected
+                    WSHandler->WatchPrompt(CurrentPromptId, CompleteDelegate);
+                }
             }
+            else
+            {
+                UE_LOG(LogTemp, Error, TEXT("ComfyUI Panel: WebSocket handler is INVALID"));
+                UpdateStatus(TEXT("Error: WebSocket unavailable"));
+            }
+        }
+        else
+        {
+            UE_LOG(LogTemp, Error, TEXT("ComfyUI Panel: Could not get ComfyUI module"));
+            UpdateStatus(TEXT("Error: Module unavailable"));
         }
     });
 
     SubmitRequest->ProcessRequest();
+}
+
+FReply SComfyUIPanel::OnImportClicked()
+{
+    if (CurrentPreviewImagePath.IsEmpty())
+    {
+        UpdateStatus(TEXT("Error: No preview image to import"));
+        return FReply::Handled();
+    }
+
+    // Generate unique name with timestamp
+    FDateTime Now = FDateTime::Now();
+    FString UniqueName = FString::Printf(TEXT("Generated_%s"), *Now.ToString(TEXT("%Y%m%d_%H%M%S")));
+    
+    FString AssetPath = UComfyUIBlueprintLibrary::GenerateUniqueAssetName(TEXT("/Game/GeneratedTextures"), UniqueName);
+    UE_LOG(LogTemp, Warning, TEXT("ComfyUI Panel: Importing to: %s"), *AssetPath);
+    
+    UTexture2D* Texture = UComfyUIBlueprintLibrary::ImportImageAsAsset(CurrentPreviewImagePath, AssetPath);
+
+    if (Texture)
+    {
+        UpdateStatus(FString::Printf(TEXT("Imported to: %s"), *AssetPath));
+        UE_LOG(LogTemp, Warning, TEXT("ComfyUI Panel: Successfully imported texture to %s"), *AssetPath);
+        
+        // Clear preview path so user can't accidentally import twice
+        CurrentPreviewImagePath.Empty();
+    }
+    else
+    {
+        UpdateStatus(TEXT("Error: Failed to import image"));
+        UE_LOG(LogTemp, Error, TEXT("ComfyUI Panel: ImportImageAsAsset returned nullptr"));
+    }
+
+    return FReply::Handled();
+}
+
+void SComfyUIPanel::OnGenerationComplete(bool bSuccess, const FString& PromptId)
+{
+    UE_LOG(LogTemp, Warning, TEXT("ComfyUI Panel: OnGenerationComplete CALLED - Success: %d, PromptId: %s"), bSuccess, *PromptId);
+
+    if (!bSuccess)
+    {
+        UpdateStatus(TEXT("Error: Generation failed"));
+        return;
+    }
+
+    UpdateStatus(TEXT("Loading image..."));
+
+    // Capture weak pointer AND filename prefix for the lambda
+    TWeakPtr<SComfyUIPanel> CapturedWeakThis = WeakThis;  // Copy the weak pointer
+    FString FilePrefix = CurrentFilenamePrefix;
+
+    if (GEditor)
+    {
+        FTimerHandle DelayTimer;
+        GEditor->GetTimerManager()->SetTimer(
+            DelayTimer,
+            [CapturedWeakThis, FilePrefix]()  // Capture both
+            {
+                // Check if panel still exists
+                TSharedPtr<SComfyUIPanel> Panel = CapturedWeakThis.Pin();
+                if (!Panel.IsValid())
+                {
+                    UE_LOG(LogTemp, Warning, TEXT("ComfyUI Panel: Panel destroyed, skipping image load"));
+                    return;
+                }
+
+                // Get latest image
+                FString ImagePath = UComfyUIBlueprintLibrary::GetLatestOutputImage(FilePrefix);
+                UE_LOG(LogTemp, Warning, TEXT("ComfyUI Panel: Latest image path: %s"), *ImagePath);
+
+                if (ImagePath.IsEmpty())
+                {
+                    Panel->UpdateStatus(TEXT("Error: Could not find generated image"));
+                    UE_LOG(LogTemp, Error, TEXT("ComfyUI Panel: GetLatestOutputImage returned empty path"));
+                    return;
+                }
+
+                // Store the preview path for later import
+                Panel->CurrentPreviewImagePath = ImagePath;
+                Panel->UpdateStatus(TEXT("Preview ready! Click 'Import to Project' to save."));
+                Panel->LoadAndDisplayImage(ImagePath);
+            },
+            0.5f,
+            false
+        );
+    }
 }
 
 // ============================================================================
@@ -379,43 +617,30 @@ void SComfyUIPanel::OnWorkflowSubmitted(bool bSuccess, const FString& ResponseJs
     }
 }
 
-void SComfyUIPanel::OnGenerationComplete(bool bSuccess, const FString& PromptId)
-{
-    if (!bSuccess)
-    {
-        UpdateStatus(TEXT("Error: Generation failed"));
-        return;
-    }
 
-    UpdateStatus(TEXT("Loading image..."));
-
-    // Get latest image
-    FString ImagePath = UComfyUIBlueprintLibrary::GetLatestOutputImage(CurrentFilenamePrefix);
-
-    if (ImagePath.IsEmpty())
-    {
-        UpdateStatus(TEXT("Error: Could not find generated image"));
-        return;
-    }
-
-    // Import as asset
-    FString AssetPath = UComfyUIBlueprintLibrary::GenerateUniqueAssetName(TEXT("/Game/GeneratedTextures"), TEXT("Generated"));
-    UTexture2D* Texture = UComfyUIBlueprintLibrary::ImportImageAsAsset(ImagePath, AssetPath);
-
-    if (Texture)
-    {
-        UpdateStatus(FString::Printf(TEXT("Complete! Saved to: %s"), *AssetPath));
-        LoadAndDisplayImage(ImagePath);
-    }
-    else
-    {
-        UpdateStatus(TEXT("Error: Failed to import image"));
-    }
-}
 
 // ============================================================================
 // Helpers
 // ============================================================================
+void SComfyUIPanel::OnWidthChanged(TSharedPtr<FString> NewSelection, ESelectInfo::Type SelectInfo)
+{
+    SelectedWidth = NewSelection;
+}
+
+void SComfyUIPanel::OnHeightChanged(TSharedPtr<FString> NewSelection, ESelectInfo::Type SelectInfo)
+{
+    SelectedHeight = NewSelection;
+}
+
+void SComfyUIPanel::OnCustomWidthChanged(int32 NewValue)
+{
+    CustomWidth = NewValue;
+}
+
+void SComfyUIPanel::OnCustomHeightChanged(int32 NewValue)
+{
+    CustomHeight = NewValue;
+}
 
 void SComfyUIPanel::UpdateStatus(const FString& Status)
 {
@@ -428,12 +653,27 @@ void SComfyUIPanel::LoadAndDisplayImage(const FString& FilePath)
     UTexture2D* Texture = UComfyUIBlueprintLibrary::LoadImageFromFile(FilePath);
     if (!Texture)
     {
+        UE_LOG(LogTemp, Error, TEXT("ComfyUI Panel: Failed to load texture from %s"), *FilePath);
         return;
+    }
+
+    // Keep the texture alive by adding to root
+    Texture->AddToRoot();
+    
+    // Remove old texture from root if it exists
+    if (ImageBrush.IsValid() && ImageBrush->GetResourceObject())
+    {
+        if (UTexture2D* OldTexture = Cast<UTexture2D>(ImageBrush->GetResourceObject()))
+        {
+            OldTexture->RemoveFromRoot();
+        }
     }
 
     ImageBrush = MakeShared<FSlateBrush>();
     ImageBrush->SetResourceObject(Texture);
     ImageBrush->ImageSize = FVector2D(Texture->GetSizeX(), Texture->GetSizeY());
+    ImageBrush->DrawAs = ESlateBrushDrawType::Image;
+    ImageBrush->Tiling = ESlateBrushTileType::NoTile;  // Don't tile
 
     if (PreviewImage.IsValid())
     {
@@ -441,18 +681,21 @@ void SComfyUIPanel::LoadAndDisplayImage(const FString& FilePath)
     }
 }
 
-void SComfyUIPanel::GetResolutionFromString(const FString& ResString, int32& OutWidth, int32& OutHeight)
+SComfyUIPanel::~SComfyUIPanel()
 {
-    FString WidthStr, HeightStr;
-    if (ResString.Split(TEXT("x"), &WidthStr, &HeightStr))
+    // Clean up timer
+    if (GEditor && ConnectionTimerHandle.IsValid())
     {
-        OutWidth = FCString::Atoi(*WidthStr);
-        OutHeight = FCString::Atoi(*HeightStr);
+        GEditor->GetTimerManager()->ClearTimer(ConnectionTimerHandle);
     }
-    else
+    
+    // Remove texture from root to allow garbage collection
+    if (ImageBrush.IsValid() && ImageBrush->GetResourceObject())
     {
-        OutWidth = 1920;
-        OutHeight = 1080;
+        if (UTexture2D* OldTexture = Cast<UTexture2D>(ImageBrush->GetResourceObject()))
+        {
+            OldTexture->RemoveFromRoot();
+        }
     }
 }
 

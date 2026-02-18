@@ -12,6 +12,7 @@ public:
     SLATE_END_ARGS()
 
     void Construct(const FArguments& InArgs);
+    virtual ~SComfyUIPanel();
 
 private:
     // UI State
@@ -23,9 +24,21 @@ private:
     TSharedPtr<class SImage> PreviewImage;
     TSharedPtr<FSlateBrush> ImageBrush;
 
-    // Resolution presets
-    TArray<TSharedPtr<FString>> ResolutionOptions;
-    TSharedPtr<FString> SelectedResolution;
+    TWeakPtr<SComfyUIPanel> WeakThis;
+
+    // Resolution controls
+    TArray<TSharedPtr<FString>> WidthOptions;
+    TArray<TSharedPtr<FString>> HeightOptions;
+    TSharedPtr<FString> SelectedWidth;
+    TSharedPtr<FString> SelectedHeight;
+    
+    int32 CustomWidth = 1024;
+    int32 CustomHeight = 1024;
+    
+    void OnWidthChanged(TSharedPtr<FString> NewSelection, ESelectInfo::Type SelectInfo);
+    void OnHeightChanged(TSharedPtr<FString> NewSelection, ESelectInfo::Type SelectInfo);
+    void OnCustomWidthChanged(int32 NewValue);
+    void OnCustomHeightChanged(int32 NewValue);
 
     // Polling & Connection Logic
     int32 ConnectionAttempts = 0;
@@ -53,4 +66,7 @@ private:
     // Current generation state
     FString CurrentPromptId;
     FString CurrentFilenamePrefix;
+    FString CurrentPreviewImagePath;
+
+    FReply OnImportClicked();
 };
