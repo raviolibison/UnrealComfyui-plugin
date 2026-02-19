@@ -6,6 +6,7 @@
   "Description": "ComfyUI integration for Unreal Engine - generate images directly from the editor.",
   "Category": "Rendering",
   "CreatedBy": "raviolibison",
+  "CanContainContent":  true,
   "Modules": [
     {
       "Name": "ComfyUI",
