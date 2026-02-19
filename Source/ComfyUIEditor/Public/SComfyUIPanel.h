@@ -31,6 +31,9 @@ private:
     TArray<TSharedPtr<FString>> HeightOptions;
     TSharedPtr<FString> SelectedWidth;
     TSharedPtr<FString> SelectedHeight;
+
+    //Target Actor array
+    TArray<TWeakObjectPtr<AActor>> TargetActors;
     
     int32 CustomWidth = 1024;
     int32 CustomHeight = 1024;
@@ -49,17 +52,32 @@ private:
     // UI Callbacks
     FReply OnStartComfyClicked(); // <--- This too
     FReply OnGenerateClicked();
-    
+    void OnAutoApplyCheckChanged(ECheckBoxState NewState);
     void OnPromptTextChanged(const FText& NewText);
     void OnNegativePromptTextChanged(const FText& NewText);
+
+    //Auto apply
+    bool bAutoApplyEnabled = false;
 
     // Generation callbacks
     void OnWorkflowSubmitted(bool bSuccess, const FString& ResponseJson, const FString& PromptId);
     void OnGenerationComplete(bool bSuccess, const FString& PromptId);
 
+    //Material
+    UMaterial* BaseMaterial = nullptr;
+    UMaterialInstanceDynamic* CachedDynamicMaterial = nullptr;
+    TWeakObjectPtr<AActor> TargetActor;
+
     // Helper functions
     void UpdateStatus(const FString& Status);
     void LoadAndDisplayImage(const FString& FilePath);
+    void LoadBaseMaterial();
+    TArray<AActor*> GetSelectedActors();
+    void AddSelectedActorsToList();
+    void ClearTargetActors();
+    void RemoveActorFromList(AActor* Actor);
+    
+    UMeshComponent* GetMeshComponentFromActor(AActor* Actor);
 
     // Current generation state
     FString CurrentPromptId;

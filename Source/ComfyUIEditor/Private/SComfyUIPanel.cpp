@@ -17,6 +17,12 @@
 #include "Styling/AppStyle.h"
 #include "Editor.h"
 #include "Widgets/Input/SNumericEntryBox.h"
+#include "Materials/Material.h"
+#include "Materials/MaterialInstanceDynamic.h"
+#include "Components/MeshComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "Selection.h"
+#include "Widgets/Input/SCheckBox.h"
 
 #define LOCTEXT_NAMESPACE "SComfyUIPanel"
 
@@ -44,6 +50,8 @@ void SComfyUIPanel::Construct(const FArguments& InArgs)
     CurrentFilenamePrefix = TEXT("UE_Editor");
 
     WeakThis = SharedThis(this);
+
+    LoadBaseMaterial();
     
     // Initial State: Reset connection attempts so we do a single passive check
     ConnectionAttempts = 0; 
@@ -209,6 +217,78 @@ void SComfyUIPanel::Construct(const FArguments& InArgs)
                     .MinDesiredValueWidth(100)
                 ]
             ]
+            // --- NEW: AUTO-APPLY SECTION ---
+            + SVerticalBox::Slot()
+            .AutoHeight()
+            .Padding(0, 20, 0, 10)
+            [
+                SNew(SVerticalBox)
+                
+                // Auto-apply checkbox
+                + SVerticalBox::Slot()
+                .AutoHeight()
+                [
+                    SNew(SHorizontalBox)
+                    + SHorizontalBox::Slot()
+                    .AutoWidth()
+                    [
+                        SNew(SCheckBox)
+                        .IsChecked_Lambda([this]() { 
+                            return bAutoApplyEnabled ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; 
+                        })
+                        .OnCheckStateChanged(this, &SComfyUIPanel::OnAutoApplyCheckChanged)
+                    ]
+                    + SHorizontalBox::Slot()
+                    .Padding(5, 0, 0, 0)
+                    .VAlign(VAlign_Center)
+                    [
+                        SNew(STextBlock)
+                        .Text(LOCTEXT("AutoApplyLabel", "Auto-apply to selected actor"))
+                    ]
+                ]
+                
+                // Selected actor display
+                + SVerticalBox::Slot()
+                .AutoHeight()
+                .Padding(20, 5, 0, 0)
+                [
+                    SNew(STextBlock)
+                    .Text_Lambda([this]() { 
+                        TArray<AActor*> Actors = GetSelectedActors();
+                        
+                        if (Actors.Num() == 0)
+                        {
+                            return FText::FromString(TEXT("Target: None"));
+                        }
+                        else if (Actors.Num() == 1)
+                        {
+                            return FText::FromString(FString::Printf(TEXT("Target: %s"), *Actors[0]->GetActorLabel()));
+                        }
+                        else
+                        {
+                            // Multiple actors selected
+                            FString ActorNames;
+                            for (int32 i = 0; i < FMath::Min(3, Actors.Num()); i++)
+                            {
+                                if (i > 0) ActorNames += TEXT(", ");
+                                ActorNames += Actors[i]->GetActorLabel();
+                            }
+                            if (Actors.Num() > 3)
+                            {
+                                ActorNames += FString::Printf(TEXT("... (+%d more)"), Actors.Num() - 3);
+                            }
+                            return FText::FromString(FString::Printf(TEXT("Target: %d actors (%s)"), Actors.Num(), *ActorNames));
+                        }
+                    })
+                    .ColorAndOpacity_Lambda([this]() {
+                        TArray<AActor*> Actors = GetSelectedActors();
+                        return Actors.Num() > 0 ? FLinearColor::White : FLinearColor(0.5f, 0.5f, 0.5f);
+                    })
+                    .Visibility_Lambda([this]() {
+                        return bAutoApplyEnabled ? EVisibility::Visible : EVisibility::Collapsed;
+                    })
+]
+            ]
 
             // --- GENERATE BUTTON ---
             + SVerticalBox::Slot()
@@ -297,8 +377,24 @@ void SComfyUIPanel::Construct(const FArguments& InArgs)
                     SAssignNew(PreviewImage, SImage)
                 ]
             ]
+            
         ]
     ];
+
+    if (GEditor)
+    {
+        FTimerHandle TestTimer;
+        GEditor->GetTimerManager()->SetTimer(
+            TestTimer,
+            [this]()
+            {
+                UE_LOG(LogTemp, Warning, TEXT("=== TESTING ACTOR LIST ==="));
+                UE_LOG(LogTemp, Warning, TEXT("Current list has %d actors"), TargetActors.Num());
+            },
+            5.0f,
+            true  // Repeat every 5 seconds
+        );
+    }
 }
 
 // ============================================================================
@@ -646,6 +742,126 @@ void SComfyUIPanel::UpdateStatus(const FString& Status)
 {
     StatusText = Status;
     UE_LOG(LogTemp, Warning, TEXT("ComfyUI Panel: %s"), *Status);
+}
+
+TArray<AActor*> SComfyUIPanel::GetSelectedActors()
+{
+    TArray<AActor*> SelectedActors;
+    
+    if (!GEditor)
+    {
+        return SelectedActors;
+    }
+    
+    USelection* Selection = GEditor->GetSelectedActors();
+    if (!Selection)
+    {
+        return SelectedActors;
+    }
+    
+    // Get all selected actors
+    for (FSelectionIterator It(*Selection); It; ++It)
+    {
+        if (AActor* Actor = Cast<AActor>(*It))
+        {
+            SelectedActors.Add(Actor);
+        }
+    }
+    
+    return SelectedActors;
+}
+void SComfyUIPanel::OnAutoApplyCheckChanged(ECheckBoxState NewState)
+{
+    bAutoApplyEnabled = (NewState == ECheckBoxState::Checked);
+    
+    if (bAutoApplyEnabled)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Auto-apply enabled"));
+    }
+    else
+    {
+        UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Auto-apply disabled"));
+    }
+}
+
+void SComfyUIPanel::AddSelectedActorsToList()
+{
+    TArray<AActor*> SelectedActors = GetSelectedActors();
+    
+    if (SelectedActors.Num() == 0)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("ComfyUI: No actors selected"));
+        return;
+    }
+    
+    int32 AddedCount = 0;
+    for (AActor* Actor : SelectedActors)
+    {
+        if (!Actor)
+        {
+            continue;
+        }
+        
+        // Check if already in list
+        bool bAlreadyAdded = false;
+        for (const TWeakObjectPtr<AActor>& ExistingActor : TargetActors)
+        {
+            if (ExistingActor.IsValid() && ExistingActor.Get() == Actor)
+            {
+                bAlreadyAdded = true;
+                break;
+            }
+        }
+        
+        if (!bAlreadyAdded)
+        {
+            TargetActors.Add(Actor);
+            AddedCount++;
+            UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Added actor to list: %s"), *Actor->GetActorLabel());
+        }
+    }
+    
+    UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Added %d actor(s) to target list. Total: %d"), AddedCount, TargetActors.Num());
+}
+
+void SComfyUIPanel::ClearTargetActors()
+{
+    int32 Count = TargetActors.Num();
+    TargetActors.Empty();
+    UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Cleared target actor list (%d actors removed)"), Count);
+}
+
+void SComfyUIPanel::RemoveActorFromList(AActor* Actor)
+{
+    for (int32 i = TargetActors.Num() - 1; i >= 0; i--)
+    {
+        if (TargetActors[i].IsValid() && TargetActors[i].Get() == Actor)
+        {
+            TargetActors.RemoveAt(i);
+            UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Removed actor from list: %s"), *Actor->GetActorLabel());
+            break;
+        }
+    }
+}
+
+void SComfyUIPanel::LoadBaseMaterial()
+{
+    if (BaseMaterial)
+    {
+        return; // Already loaded
+    }
+    
+    BaseMaterial = LoadObject<UMaterial>(nullptr, 
+        TEXT("/ComfyUI/Materials/M_ComfyUI_Base.M_ComfyUI_Base"));
+    
+    if (BaseMaterial)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Successfully loaded base material"));
+    }
+    else
+    {
+        UE_LOG(LogTemp, Error, TEXT("ComfyUI: FAILED to load base material from /ComfyUI/Materials/M_ComfyUI_Base"));
+    }
 }
 
 void SComfyUIPanel::LoadAndDisplayImage(const FString& FilePath)
