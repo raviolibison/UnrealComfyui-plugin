@@ -55,6 +55,9 @@ private:
     void OnAutoApplyCheckChanged(ECheckBoxState NewState);
     void OnPromptTextChanged(const FText& NewText);
     void OnNegativePromptTextChanged(const FText& NewText);
+    FReply OnAddSelectedClicked();
+    FReply OnClearAllClicked();
+    FReply OnApplyToActorsClicked();
 
     //Auto apply
     bool bAutoApplyEnabled = false;
@@ -65,8 +68,9 @@ private:
 
     //Material
     UMaterial* BaseMaterial = nullptr;
-    UMaterialInstanceDynamic* CachedDynamicMaterial = nullptr;
-    TWeakObjectPtr<AActor> TargetActor;
+    TMap<TWeakObjectPtr<AActor>, UMaterialInstanceDynamic*> ActorMaterialMap;
+    
+    
 
     // Helper functions
     void UpdateStatus(const FString& Status);
@@ -76,8 +80,10 @@ private:
     void AddSelectedActorsToList();
     void ClearTargetActors();
     void RemoveActorFromList(AActor* Actor);
-    
     UMeshComponent* GetMeshComponentFromActor(AActor* Actor);
+    bool IsActorValidForMaterial(AActor* Actor);
+    void ApplyMaterialToTargetActors(UTexture2D* Texture);
+    
 
     // Current generation state
     FString CurrentPromptId;

@@ -22,7 +22,17 @@
 #include "Components/MeshComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Selection.h"
+#include "AssetRegistry/AssetRegistryModule.h"
 #include "Widgets/Input/SCheckBox.h"
+#include "Components/MeshComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "GameFramework/Actor.h"
+#include "Materials/Material.h"
+#include "Materials/MaterialInstanceDynamic.h"
+#include "Materials/MaterialInstanceConstant.h"
+#include "AssetRegistry/AssetRegistryModule.h"
+#include "UObject/SavePackage.h"
 
 #define LOCTEXT_NAMESPACE "SComfyUIPanel"
 
@@ -224,9 +234,91 @@ void SComfyUIPanel::Construct(const FArguments& InArgs)
             [
                 SNew(SVerticalBox)
                 
+                // Target Actors List Header
+                + SVerticalBox::Slot()
+                .AutoHeight()
+                .Padding(0, 0, 0, 5)
+                [
+                    SNew(STextBlock)
+                    .Text(LOCTEXT("TargetActorsLabel", "Target Actors:"))
+                    .Font(FCoreStyle::GetDefaultFontStyle("Bold", 10))
+                ]
+                
+                // Target actors display (locked-in list)
+                + SVerticalBox::Slot()
+                .AutoHeight()
+                .Padding(10, 5, 0, 5)
+                [
+                    SNew(STextBlock)
+                    .Text_Lambda([this]() {
+                        if (TargetActors.Num() == 0)
+                        {
+                            return FText::FromString(TEXT("(No actors added)"));
+                        }
+                        
+                        FString ActorList;
+                        int32 ValidCount = 0;
+                        for (const TWeakObjectPtr<AActor>& WeakActor : TargetActors)
+                        {
+                            if (WeakActor.IsValid())
+                            {
+                                if (ValidCount > 0) ActorList += TEXT("\n");
+                                ActorList += FString::Printf(TEXT("• %s"), *WeakActor->GetActorLabel());
+                                ValidCount++;
+                            }
+                        }
+                        
+                        if (ValidCount == 0)
+                        {
+                            return FText::FromString(TEXT("(No valid actors)"));
+                        }
+                        
+                        return FText::FromString(ActorList);
+                    })
+                    .ColorAndOpacity_Lambda([this]() {
+                        return TargetActors.Num() > 0 ? FLinearColor::White : FLinearColor(0.5f, 0.5f, 0.5f);
+                    })
+                ]
+                
+                // Buttons: Add Selected & Clear All
+                + SVerticalBox::Slot()
+                .AutoHeight()
+                .Padding(0, 5, 0, 0)
+                [
+                    SNew(SHorizontalBox)
+                    
+                    // Add Selected button
+                    + SHorizontalBox::Slot()
+                    .AutoWidth()
+                    [
+                        SNew(SButton)
+                        .Text(LOCTEXT("AddSelectedButton", "+ Add Selected"))
+                        .OnClicked(this, &SComfyUIPanel::OnAddSelectedClicked)
+                        .IsEnabled_Lambda([this]() {
+                            return GetSelectedActors().Num() > 0;
+                        })
+                        .ToolTipText(LOCTEXT("AddSelectedTooltip", "Add currently selected actors to the target list"))
+                    ]
+                    
+                    // Clear All button
+                    + SHorizontalBox::Slot()
+                    .AutoWidth()
+                    .Padding(10, 0, 0, 0)
+                    [
+                        SNew(SButton)
+                        .Text(LOCTEXT("ClearAllButton", "Clear All"))
+                        .OnClicked(this, &SComfyUIPanel::OnClearAllClicked)
+                        .IsEnabled_Lambda([this]() {
+                            return TargetActors.Num() > 0;
+                        })
+                        .ToolTipText(LOCTEXT("ClearAllTooltip", "Remove all actors from the target list"))
+                    ]
+                ]
+                
                 // Auto-apply checkbox
                 + SVerticalBox::Slot()
                 .AutoHeight()
+                .Padding(0, 10, 0, 0)
                 [
                     SNew(SHorizontalBox)
                     + SHorizontalBox::Slot()
@@ -237,57 +329,18 @@ void SComfyUIPanel::Construct(const FArguments& InArgs)
                             return bAutoApplyEnabled ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; 
                         })
                         .OnCheckStateChanged(this, &SComfyUIPanel::OnAutoApplyCheckChanged)
+                        .IsEnabled_Lambda([this]() {
+                            return TargetActors.Num() > 0;
+                        })
                     ]
                     + SHorizontalBox::Slot()
                     .Padding(5, 0, 0, 0)
                     .VAlign(VAlign_Center)
                     [
                         SNew(STextBlock)
-                        .Text(LOCTEXT("AutoApplyLabel", "Auto-apply to selected actor"))
+                        .Text(LOCTEXT("AutoApplyLabel", "Auto-apply to target actors on generation"))
                     ]
                 ]
-                
-                // Selected actor display
-                + SVerticalBox::Slot()
-                .AutoHeight()
-                .Padding(20, 5, 0, 0)
-                [
-                    SNew(STextBlock)
-                    .Text_Lambda([this]() { 
-                        TArray<AActor*> Actors = GetSelectedActors();
-                        
-                        if (Actors.Num() == 0)
-                        {
-                            return FText::FromString(TEXT("Target: None"));
-                        }
-                        else if (Actors.Num() == 1)
-                        {
-                            return FText::FromString(FString::Printf(TEXT("Target: %s"), *Actors[0]->GetActorLabel()));
-                        }
-                        else
-                        {
-                            // Multiple actors selected
-                            FString ActorNames;
-                            for (int32 i = 0; i < FMath::Min(3, Actors.Num()); i++)
-                            {
-                                if (i > 0) ActorNames += TEXT(", ");
-                                ActorNames += Actors[i]->GetActorLabel();
-                            }
-                            if (Actors.Num() > 3)
-                            {
-                                ActorNames += FString::Printf(TEXT("... (+%d more)"), Actors.Num() - 3);
-                            }
-                            return FText::FromString(FString::Printf(TEXT("Target: %d actors (%s)"), Actors.Num(), *ActorNames));
-                        }
-                    })
-                    .ColorAndOpacity_Lambda([this]() {
-                        TArray<AActor*> Actors = GetSelectedActors();
-                        return Actors.Num() > 0 ? FLinearColor::White : FLinearColor(0.5f, 0.5f, 0.5f);
-                    })
-                    .Visibility_Lambda([this]() {
-                        return bAutoApplyEnabled ? EVisibility::Visible : EVisibility::Collapsed;
-                    })
-]
             ]
 
             // --- GENERATE BUTTON ---
@@ -301,16 +354,46 @@ void SComfyUIPanel::Construct(const FArguments& InArgs)
                 .HAlign(HAlign_Center)
                 .IsEnabled_Lambda([this]() { return bIsComfyReady; }) // <--- LOCKED UNTIL CONNECTED
             ]
-            // --- IMPORT BUTTON ---
+
+            // --- ACTION BUTTONS ---
             + SVerticalBox::Slot()
             .AutoHeight()
             .Padding(0, 10, 0, 10)
             [
-                SNew(SButton)
-                .Text(LOCTEXT("ImportButton", "Import to Project"))
-                .OnClicked(this, &SComfyUIPanel::OnImportClicked)
-                .HAlign(HAlign_Center)
-                .IsEnabled_Lambda([this]() { return !CurrentPreviewImagePath.IsEmpty(); })  // Only enabled when preview exists
+                SNew(SHorizontalBox)
+                
+                // Apply to Actors button (temporary)
+                + SHorizontalBox::Slot()
+                .AutoWidth()
+                [
+                    SNew(SButton)
+                    .Text(LOCTEXT("ApplyToActorsButton", "Apply to Actors"))
+                    .OnClicked(this, &SComfyUIPanel::OnApplyToActorsClicked)
+                    .IsEnabled_Lambda([this]() { 
+                        return !CurrentPreviewImagePath.IsEmpty() && TargetActors.Num() > 0; 
+                    })
+                    .ToolTipText(LOCTEXT("ApplyToActorsTooltip", "Apply texture to target actors (temporary - lost on restart)"))
+                ]
+                
+                // Save to Project button (permanent)
+                + SHorizontalBox::Slot()
+                .AutoWidth()
+                .Padding(10, 0, 0, 0)
+                [
+                    SNew(SButton)
+                    .Text(LOCTEXT("SaveToProjectButton", "Save to Project"))
+                    .OnClicked(this, &SComfyUIPanel::OnImportClicked)
+                    .IsEnabled_Lambda([this]() { 
+                        return !CurrentPreviewImagePath.IsEmpty(); 
+                    })
+                    .ToolTipText_Lambda([this]() {
+                        if (TargetActors.Num() > 0)
+                        {
+                            return LOCTEXT("SaveWithMaterialsTooltip", "Save texture and create material instances for target actors (permanent)");
+                        }
+                        return LOCTEXT("SaveTextureOnlyTooltip", "Save texture to project (no materials - no target actors)");
+                    })
+                ]
             ]
 
             // Status Bar
@@ -380,21 +463,6 @@ void SComfyUIPanel::Construct(const FArguments& InArgs)
             
         ]
     ];
-
-    if (GEditor)
-    {
-        FTimerHandle TestTimer;
-        GEditor->GetTimerManager()->SetTimer(
-            TestTimer,
-            [this]()
-            {
-                UE_LOG(LogTemp, Warning, TEXT("=== TESTING ACTOR LIST ==="));
-                UE_LOG(LogTemp, Warning, TEXT("Current list has %d actors"), TargetActors.Num());
-            },
-            5.0f,
-            true  // Repeat every 5 seconds
-        );
-    }
 }
 
 // ============================================================================
@@ -616,33 +684,107 @@ FReply SComfyUIPanel::OnImportClicked()
 {
     if (CurrentPreviewImagePath.IsEmpty())
     {
-        UpdateStatus(TEXT("Error: No preview image to import"));
+        UpdateStatus(TEXT("Error: No preview image available"));
         return FReply::Handled();
     }
-
-    // Generate unique name with timestamp
+    
+    // Import texture as permanent asset
     FDateTime Now = FDateTime::Now();
-    FString UniqueName = FString::Printf(TEXT("Generated_%s"), *Now.ToString(TEXT("%Y%m%d_%H%M%S")));
+    FString TextureName = FString::Printf(TEXT("T_Generated_%s"), *Now.ToString(TEXT("%Y%m%d_%H%M%S")));
+    FString TextureAssetPath = UComfyUIBlueprintLibrary::GenerateUniqueAssetName(TEXT("/Game/GeneratedTextures"), TextureName);
     
-    FString AssetPath = UComfyUIBlueprintLibrary::GenerateUniqueAssetName(TEXT("/Game/GeneratedTextures"), UniqueName);
-    UE_LOG(LogTemp, Warning, TEXT("ComfyUI Panel: Importing to: %s"), *AssetPath);
-    
-    UTexture2D* Texture = UComfyUIBlueprintLibrary::ImportImageAsAsset(CurrentPreviewImagePath, AssetPath);
-
-    if (Texture)
+    UTexture2D* PermanentTexture = UComfyUIBlueprintLibrary::ImportImageAsAsset(CurrentPreviewImagePath, TextureAssetPath);
+    if (!PermanentTexture)
     {
-        UpdateStatus(FString::Printf(TEXT("Imported to: %s"), *AssetPath));
-        UE_LOG(LogTemp, Warning, TEXT("ComfyUI Panel: Successfully imported texture to %s"), *AssetPath);
+        UpdateStatus(TEXT("Error: Failed to create texture asset"));
+        return FReply::Handled();
+    }
+    
+    UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Created permanent texture: %s"), *TextureAssetPath);
+    
+    // If we have target actors, also create materials
+    if (TargetActors.Num() > 0 && BaseMaterial)
+    {
+        int32 SuccessCount = 0;
         
-        // Clear preview path so user can't accidentally import twice
-        CurrentPreviewImagePath.Empty();
+        for (const TWeakObjectPtr<AActor>& WeakActor : TargetActors)
+        {
+            if (!WeakActor.IsValid())
+            {
+                continue;
+            }
+            
+            AActor* Actor = WeakActor.Get();
+            UMeshComponent* MeshComp = GetMeshComponentFromActor(Actor);
+            
+            if (!MeshComp)
+            {
+                UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Actor '%s' no longer has mesh component, skipping"), *Actor->GetActorLabel());
+                continue;
+            }
+            
+            // Generate unique material name
+            FString MaterialName = FString::Printf(TEXT("MI_%s_%s"), 
+                *Actor->GetActorLabel().Replace(TEXT(" "), TEXT("_")), 
+                *Now.ToString(TEXT("%Y%m%d_%H%M%S")));
+            FString MaterialAssetPath = UComfyUIBlueprintLibrary::GenerateUniqueAssetName(TEXT("/Game/GeneratedMaterials"), MaterialName);
+            
+            // Create the material instance asset
+            UPackage* Package = CreatePackage(*MaterialAssetPath);
+            UMaterialInstanceConstant* MaterialInstance = NewObject<UMaterialInstanceConstant>(
+                Package, 
+                FName(*FPaths::GetBaseFilename(MaterialAssetPath)), 
+                RF_Public | RF_Standalone
+            );
+            
+            if (!MaterialInstance)
+            {
+                UE_LOG(LogTemp, Error, TEXT("ComfyUI: Failed to create material instance for actor '%s'"), *Actor->GetActorLabel());
+                continue;
+            }
+            
+            // Set parent material
+            MaterialInstance->SetParentEditorOnly(BaseMaterial);
+            
+            // Set texture parameter
+            MaterialInstance->SetTextureParameterValueEditorOnly(FMaterialParameterInfo(TEXT("BaseColorTexture")), PermanentTexture);
+            
+            // Mark as modified and save
+            MaterialInstance->MarkPackageDirty();
+            MaterialInstance->PostEditChange();
+            
+            // Notify asset registry
+            FAssetRegistryModule::AssetCreated(MaterialInstance);
+            
+            // Apply the permanent material to the mesh
+            MeshComp->SetMaterial(0, MaterialInstance);
+            
+            // Remove from dynamic material map since we're now using permanent material
+            ActorMaterialMap.Remove(WeakActor);
+            
+            UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Created permanent material for '%s': %s"), *Actor->GetActorLabel(), *MaterialAssetPath);
+            SuccessCount++;
+        }
+        
+        if (SuccessCount > 0)
+        {
+            UpdateStatus(FString::Printf(TEXT("Saved texture and %d material(s) to project"), SuccessCount));
+            UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Saved texture and %d material(s)"), SuccessCount);
+        }
+        else
+        {
+            UpdateStatus(FString::Printf(TEXT("Saved texture to: %s (no materials created)"), *TextureAssetPath));
+        }
     }
     else
     {
-        UpdateStatus(TEXT("Error: Failed to import image"));
-        UE_LOG(LogTemp, Error, TEXT("ComfyUI Panel: ImportImageAsAsset returned nullptr"));
+        // No target actors, just texture
+        UpdateStatus(FString::Printf(TEXT("Saved texture to: %s"), *TextureAssetPath));
     }
-
+    
+    // Clear preview path so user can't accidentally import twice
+    CurrentPreviewImagePath.Empty();
+    
     return FReply::Handled();
 }
 
@@ -661,13 +803,14 @@ void SComfyUIPanel::OnGenerationComplete(bool bSuccess, const FString& PromptId)
     // Capture weak pointer AND filename prefix for the lambda
     TWeakPtr<SComfyUIPanel> CapturedWeakThis = WeakThis;  // Copy the weak pointer
     FString FilePrefix = CurrentFilenamePrefix;
+    bool bShouldAutoApply = bAutoApplyEnabled;
 
     if (GEditor)
     {
         FTimerHandle DelayTimer;
         GEditor->GetTimerManager()->SetTimer(
             DelayTimer,
-            [CapturedWeakThis, FilePrefix]()  // Capture both
+            [CapturedWeakThis, FilePrefix, bShouldAutoApply]()  // Capture both
             {
                 // Check if panel still exists
                 TSharedPtr<SComfyUIPanel> Panel = CapturedWeakThis.Pin();
@@ -690,7 +833,24 @@ void SComfyUIPanel::OnGenerationComplete(bool bSuccess, const FString& PromptId)
 
                 // Store the preview path for later import
                 Panel->CurrentPreviewImagePath = ImagePath;
-                Panel->UpdateStatus(TEXT("Preview ready! Click 'Import to Project' to save."));
+
+                UTexture2D* Texture = UComfyUIBlueprintLibrary::LoadImageFromFile(ImagePath);
+
+                if (!Texture)
+                {
+                    Panel->UpdateStatus(TEXT("Error: Could not load image"));
+                    return;
+                }
+
+                if (bShouldAutoApply && Panel->TargetActors.Num() > 0)
+                {
+                    Panel->ApplyMaterialToTargetActors(Texture);
+                }
+                else
+                {
+                    Panel->UpdateStatus(TEXT("Preview ready! Click 'Import to Project' to save."));
+                }
+                
                 Panel->LoadAndDisplayImage(ImagePath);
             },
             0.5f,
@@ -784,22 +944,174 @@ void SComfyUIPanel::OnAutoApplyCheckChanged(ECheckBoxState NewState)
     }
 }
 
+FReply SComfyUIPanel::OnAddSelectedClicked()
+{
+    AddSelectedActorsToList();
+    return FReply::Handled();
+}
+
+FReply SComfyUIPanel::OnClearAllClicked()
+{
+    ClearTargetActors();
+    return FReply::Handled();
+}
+
+UMeshComponent* SComfyUIPanel::GetMeshComponentFromActor(AActor* Actor)
+{
+    if (!Actor)
+    {
+        return nullptr;
+    }
+    
+    // Try to find StaticMeshComponent first (most common)
+    if (UStaticMeshComponent* StaticMesh = Actor->FindComponentByClass<UStaticMeshComponent>())
+    {
+        return StaticMesh;
+    }
+    
+    // Try SkeletalMeshComponent (for characters, animated meshes)
+    if (USkeletalMeshComponent* SkeletalMesh = Actor->FindComponentByClass<USkeletalMeshComponent>())
+    {
+        return SkeletalMesh;
+    }
+    
+    // No mesh component found
+    return nullptr;
+}
+
+bool SComfyUIPanel::IsActorValidForMaterial(AActor* Actor)
+{
+    if (!Actor)
+    {
+        return false;
+    }
+    
+    return GetMeshComponentFromActor(Actor) != nullptr;
+}
+void SComfyUIPanel::ApplyMaterialToTargetActors(UTexture2D* Texture)
+{
+    if (!Texture)
+    {
+        UE_LOG(LogTemp, Error, TEXT("ComfyUI: Cannot apply null texture"));
+        return;
+    }
+    
+    if (!BaseMaterial)
+    {
+        UE_LOG(LogTemp, Error, TEXT("ComfyUI: Base material not loaded"));
+        return;
+    }
+    
+    int32 AppliedCount = 0;
+    int32 FailedCount = 0;
+    
+    // Clean up invalid actor entries
+    TArray<TWeakObjectPtr<AActor>> InvalidActors;
+    for (auto& Pair : ActorMaterialMap)
+    {
+        if (!Pair.Key.IsValid())
+        {
+            InvalidActors.Add(Pair.Key);
+        }
+    }
+    for (const TWeakObjectPtr<AActor>& InvalidActor : InvalidActors)
+    {
+        ActorMaterialMap.Remove(InvalidActor);
+    }
+    
+    // Apply material to each target actor
+    for (const TWeakObjectPtr<AActor>& WeakActor : TargetActors)
+    {
+        if (!WeakActor.IsValid())
+        {
+            continue;
+        }
+        
+        AActor* Actor = WeakActor.Get();
+        UMeshComponent* MeshComp = GetMeshComponentFromActor(Actor);
+        
+        if (!MeshComp)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Actor '%s' no longer has mesh component, skipping"), *Actor->GetActorLabel());
+            FailedCount++;
+            continue;
+        }
+        
+        // Get or create material instance for this actor
+        UMaterialInstanceDynamic* DynMaterial = nullptr;
+        
+        if (ActorMaterialMap.Contains(WeakActor))
+        {
+            // Reuse existing material
+            DynMaterial = ActorMaterialMap[WeakActor];
+            UE_LOG(LogTemp, Log, TEXT("ComfyUI: Reusing material for actor '%s'"), *Actor->GetActorLabel());
+        }
+        else
+        {
+            // Create new material instance for this actor
+            DynMaterial = UMaterialInstanceDynamic::Create(BaseMaterial, MeshComp);
+            ActorMaterialMap.Add(WeakActor, DynMaterial);
+            
+            // Apply material to slot 0
+            MeshComp->SetMaterial(0, DynMaterial);
+            UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Created new material for actor '%s'"), *Actor->GetActorLabel());
+        }
+        
+        if (DynMaterial)
+        {
+            // Update texture parameter
+            DynMaterial->SetTextureParameterValue(TEXT("BaseColorTexture"), Texture);
+            AppliedCount++;
+            UE_LOG(LogTemp, Log, TEXT("ComfyUI: Applied texture to actor '%s'"), *Actor->GetActorLabel());
+        }
+        else
+        {
+            UE_LOG(LogTemp, Error, TEXT("ComfyUI: Failed to create material for actor '%s'"), *Actor->GetActorLabel());
+            FailedCount++;
+        }
+    }
+    
+    if (AppliedCount > 0)
+    {
+        UpdateStatus(FString::Printf(TEXT("Applied material to %d actor(s)"), AppliedCount));
+        UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Applied material to %d actor(s), %d failed"), AppliedCount, FailedCount);
+    }
+    else
+    {
+        UpdateStatus(TEXT("Failed to apply materials"));
+        UE_LOG(LogTemp, Error, TEXT("ComfyUI: Failed to apply materials to any actors"));
+    }
+}
+
 void SComfyUIPanel::AddSelectedActorsToList()
 {
     TArray<AActor*> SelectedActors = GetSelectedActors();
     
     if (SelectedActors.Num() == 0)
     {
+        UpdateStatus(TEXT("No actors selected"));
         UE_LOG(LogTemp, Warning, TEXT("ComfyUI: No actors selected"));
         return;
     }
     
     int32 AddedCount = 0;
+    int32 InvalidCount = 0;
+    TArray<FString> InvalidActorNames;
+    
     for (AActor* Actor : SelectedActors)
     {
         if (!Actor)
         {
             continue;
+        }
+        
+        // Validate actor has mesh component
+        if (!IsActorValidForMaterial(Actor))
+        {
+            InvalidCount++;
+            InvalidActorNames.Add(Actor->GetActorLabel());
+            UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Skipping actor '%s' - no mesh component found"), *Actor->GetActorLabel());
+            continue;  // ← IMPORTANT: Skip this actor, don't add it
         }
         
         // Check if already in list
@@ -815,13 +1127,36 @@ void SComfyUIPanel::AddSelectedActorsToList()
         
         if (!bAlreadyAdded)
         {
-            TargetActors.Add(Actor);
+            TargetActors.Add(Actor);  // ← ONLY log should be here
             AddedCount++;
             UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Added actor to list: %s"), *Actor->GetActorLabel());
         }
+        else
+        {
+            UE_LOG(LogTemp, Log, TEXT("ComfyUI: Actor '%s' already in list, skipping"), *Actor->GetActorLabel());
+        }
     }
     
-    UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Added %d actor(s) to target list. Total: %d"), AddedCount, TargetActors.Num());
+    // Update status with results
+    if (AddedCount > 0 && InvalidCount == 0)
+    {
+        UpdateStatus(FString::Printf(TEXT("Added %d actor(s) to target list"), AddedCount));
+    }
+    else if (AddedCount > 0 && InvalidCount > 0)
+    {
+        UpdateStatus(FString::Printf(TEXT("Added %d actor(s), skipped %d (no mesh component)"), AddedCount, InvalidCount));
+    }
+    else if (InvalidCount > 0)
+    {
+        FString InvalidNames = FString::Join(InvalidActorNames, TEXT(", "));
+        UpdateStatus(FString::Printf(TEXT("Cannot add: %s - no mesh component found"), *InvalidNames));
+    }
+    else
+    {
+        UpdateStatus(TEXT("Selected actor(s) already in list"));
+    }
+    
+    UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Added %d actor(s) to target list. Total: %d. Skipped %d invalid."), AddedCount, TargetActors.Num(), InvalidCount);
 }
 
 void SComfyUIPanel::ClearTargetActors()
@@ -842,6 +1177,34 @@ void SComfyUIPanel::RemoveActorFromList(AActor* Actor)
             break;
         }
     }
+}
+
+FReply SComfyUIPanel::OnApplyToActorsClicked()
+{
+    if (CurrentPreviewImagePath.IsEmpty())
+    {
+        UpdateStatus(TEXT("Error: No preview image available"));
+        return FReply::Handled();
+    }
+    
+    if (TargetActors.Num() == 0)
+    {
+        UpdateStatus(TEXT("Error: No target actors in list"));
+        return FReply::Handled();
+    }
+    
+    // Load texture from preview
+    UTexture2D* Texture = UComfyUIBlueprintLibrary::LoadImageFromFile(CurrentPreviewImagePath);
+    if (!Texture)
+    {
+        UpdateStatus(TEXT("Error: Failed to load preview texture"));
+        return FReply::Handled();
+    }
+    
+    // Apply to all target actors
+    ApplyMaterialToTargetActors(Texture);
+    
+    return FReply::Handled();
 }
 
 void SComfyUIPanel::LoadBaseMaterial()
