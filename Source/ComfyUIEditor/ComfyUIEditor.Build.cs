@@ -31,5 +31,12 @@ public class ComfyUIEditor : ModuleRules
                 "JsonUtilities"
             }
         );
+        if (Target.bBuildEditor)
+        {
+            PrivateDependencyModuleNames.AddRange(new string[]
+            {
+                "Composure"  // or try "ComposureFramework"
+            });
+        }
     }
 }

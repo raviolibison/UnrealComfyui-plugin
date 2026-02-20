@@ -33,6 +33,10 @@
 #include "Materials/MaterialInstanceConstant.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "UObject/SavePackage.h"
+#include "CompositingElement.h"
+#include "ComposurePlayerCompositingTarget.h"
+#include "Kismet/GameplayStatics.h"
+
 
 #define LOCTEXT_NAMESPACE "SComfyUIPanel"
 
@@ -362,7 +366,7 @@ void SComfyUIPanel::Construct(const FArguments& InArgs)
             [
                 SNew(SHorizontalBox)
                 
-                // Apply to Actors button (temporary)
+                // Apply to Actors button
                 + SHorizontalBox::Slot()
                 .AutoWidth()
                 [
@@ -372,10 +376,24 @@ void SComfyUIPanel::Construct(const FArguments& InArgs)
                     .IsEnabled_Lambda([this]() { 
                         return !CurrentPreviewImagePath.IsEmpty() && TargetActors.Num() > 0; 
                     })
-                    .ToolTipText(LOCTEXT("ApplyToActorsTooltip", "Apply texture to target actors (temporary - lost on restart)"))
+                    .ToolTipText(LOCTEXT("ApplyToActorsTooltip", "Apply texture to target actors (temporary)"))
                 ]
                 
-                // Save to Project button (permanent)
+                // Apply to Composure button - NEW!
+                + SHorizontalBox::Slot()
+                .AutoWidth()
+                .Padding(10, 0, 0, 0)
+                [
+                    SNew(SButton)
+                    .Text(LOCTEXT("ApplyToComposureButton", "Apply to Composure"))
+                    .OnClicked(this, &SComfyUIPanel::OnApplyToComposureClicked)
+                    .IsEnabled_Lambda([this]() { 
+                        return !CurrentPreviewImagePath.IsEmpty(); 
+                    })
+                    .ToolTipText(LOCTEXT("ApplyToComposureTooltip", "Apply texture to Composure plate layers"))
+                ]
+                
+                // Save to Project button
                 + SHorizontalBox::Slot()
                 .AutoWidth()
                 .Padding(10, 0, 0, 0)
@@ -389,9 +407,9 @@ void SComfyUIPanel::Construct(const FArguments& InArgs)
                     .ToolTipText_Lambda([this]() {
                         if (TargetActors.Num() > 0)
                         {
-                            return LOCTEXT("SaveWithMaterialsTooltip", "Save texture and create material instances for target actors (permanent)");
+                            return LOCTEXT("SaveWithMaterialsTooltip", "Save texture and materials (permanent)");
                         }
-                        return LOCTEXT("SaveTextureOnlyTooltip", "Save texture to project (no materials - no target actors)");
+                        return LOCTEXT("SaveTextureOnlyTooltip", "Save texture to project");
                     })
                 ]
             ]
@@ -460,6 +478,7 @@ void SComfyUIPanel::Construct(const FArguments& InArgs)
                     SAssignNew(PreviewImage, SImage)
                 ]
             ]
+            
             
         ]
     ];
@@ -688,6 +707,7 @@ FReply SComfyUIPanel::OnImportClicked()
         return FReply::Handled();
     }
     
+    
     // Import texture as permanent asset
     FDateTime Now = FDateTime::Now();
     FString TextureName = FString::Printf(TEXT("T_Generated_%s"), *Now.ToString(TEXT("%Y%m%d_%H%M%S")));
@@ -780,6 +800,9 @@ FReply SComfyUIPanel::OnImportClicked()
     {
         // No target actors, just texture
         UpdateStatus(FString::Printf(TEXT("Saved texture to: %s"), *TextureAssetPath));
+        
+        LastImportedImagePath.Empty();
+        LastImportedTexture.Reset(); 
     }
     
     // Clear preview path so user can't accidentally import twice
@@ -797,6 +820,9 @@ void SComfyUIPanel::OnGenerationComplete(bool bSuccess, const FString& PromptId)
         UpdateStatus(TEXT("Error: Generation failed"));
         return;
     }
+
+    LastImportedImagePath.Empty();
+    LastImportedTexture.Reset(); 
 
     UpdateStatus(TEXT("Loading image..."));
 
@@ -1179,6 +1205,151 @@ void SComfyUIPanel::RemoveActorFromList(AActor* Actor)
     }
 }
 
+void SComfyUIPanel::ApplyTextureToComposurePlates(UTexture2D* Texture)
+{
+    if (!Texture)
+    {
+        UE_LOG(LogTemp, Error, TEXT("ComfyUI: Cannot apply null texture to Composure"));
+        return;
+    }
+    
+    if (!GEditor || !GEditor->GetEditorWorldContext().World())
+    {
+        UE_LOG(LogTemp, Error, TEXT("ComfyUI: No editor world available"));
+        return;
+    }
+    
+    UWorld* World = GEditor->GetEditorWorldContext().World();
+    
+    // Find all actors
+    TArray<AActor*> AllActors;
+    UGameplayStatics::GetAllActorsOfClass(World, AActor::StaticClass(), AllActors);
+    
+    int32 PlatesUpdated = 0;
+    
+    for (AActor* Actor : AllActors)
+    {
+        FString ClassName = Actor->GetClass()->GetName();
+        
+        // Look for CompositeActor
+        if (ClassName == TEXT("CompositeActor"))
+        {
+            UE_LOG(LogTemp, Log, TEXT("ComfyUI: Found CompositeActor: %s"), *Actor->GetActorLabel());
+            
+            // Access CompositeLayers property
+            UClass* ActorClass = Actor->GetClass();
+            FProperty* LayersProp = ActorClass->FindPropertyByName(TEXT("CompositeLayers"));
+            
+            if (!LayersProp)
+            {
+                continue;
+            }
+            
+            FArrayProperty* ArrayProp = CastField<FArrayProperty>(LayersProp);
+            if (!ArrayProp)
+            {
+                continue;
+            }
+            
+            FScriptArrayHelper ArrayHelper(ArrayProp, LayersProp->ContainerPtrToValuePtr<void>(Actor));
+            int32 NumLayers = ArrayHelper.Num();
+            
+            for (int32 i = 0; i < NumLayers; i++)
+            {
+                UObject* LayerObj = *reinterpret_cast<UObject**>(ArrayHelper.GetRawPtr(i));
+                if (!LayerObj)
+                {
+                    continue;
+                }
+                
+                FString LayerClassName = LayerObj->GetClass()->GetName();
+                
+                // Check if it's a plate layer
+                if (LayerClassName.Contains(TEXT("Plate")))
+                {
+                    FString LayerName = LayerObj->GetName();
+                    UE_LOG(LogTemp, Log, TEXT("ComfyUI: Found plate layer: %s"), *LayerName);
+                    
+                    // Find and set Texture property
+                    FProperty* TextureProp = LayerObj->GetClass()->FindPropertyByName(TEXT("Texture"));
+                    if (TextureProp)
+                    {
+                        // Set the texture
+                        FObjectProperty* ObjProp = CastField<FObjectProperty>(TextureProp);
+                        if (ObjProp)
+                        {
+                            ObjProp->SetObjectPropertyValue(TextureProp->ContainerPtrToValuePtr<void>(LayerObj), Texture);
+                            
+                            UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Set texture on plate layer '%s' to '%s'"), *LayerName, *Texture->GetName());
+                            
+                            // CRITICAL: Notify the layer object that a property changed
+                            FPropertyChangedEvent PropertyEvent(TextureProp);
+                            LayerObj->PostEditChangeProperty(PropertyEvent);
+                            
+                            // Mark layer as modified
+                            LayerObj->Modify();
+                            LayerObj->MarkPackageDirty();
+                            
+                            PlatesUpdated++;
+                        }
+                    }
+                }
+            }
+            
+            // CRITICAL: Mark the CompositeActor as modified and trigger update
+            Actor->Modify();
+            Actor->MarkPackageDirty();
+            
+            // Try to call any refresh/update functions on the CompositeActor
+            // Look for common update function names
+            UFunction* RefreshFunc = Actor->FindFunction(FName(TEXT("RefreshComposite")));
+            if (!RefreshFunc)
+            {
+                RefreshFunc = Actor->FindFunction(FName(TEXT("Refresh")));
+            }
+            if (!RefreshFunc)
+            {
+                RefreshFunc = Actor->FindFunction(FName(TEXT("Update")));
+            }
+            if (!RefreshFunc)
+            {
+                RefreshFunc = Actor->FindFunction(FName(TEXT("RecomposeNow")));
+            }
+            
+            if (RefreshFunc)
+            {
+                UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Calling refresh function: %s"), *RefreshFunc->GetName());
+                Actor->ProcessEvent(RefreshFunc, nullptr);
+            }
+            else
+            {
+                UE_LOG(LogTemp, Log, TEXT("ComfyUI: No refresh function found, trying PostEditChangeProperty"));
+                
+                // Trigger PostEditChangeProperty on the actor itself
+                FPropertyChangedEvent ActorPropertyEvent(LayersProp);
+                Actor->PostEditChangeProperty(ActorPropertyEvent);
+            }
+        }
+    }
+    
+    // Force viewport refresh
+    if (GEditor)
+    {
+        GEditor->RedrawAllViewports();
+    }
+    
+    if (PlatesUpdated > 0)
+    {
+        UpdateStatus(FString::Printf(TEXT("Applied texture to %d Composure plate(s)"), PlatesUpdated));
+        UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Successfully updated %d Composure plate layer(s)"), PlatesUpdated);
+    }
+    else
+    {
+        UpdateStatus(TEXT("No Composure plate layers found"));
+        UE_LOG(LogTemp, Warning, TEXT("ComfyUI: No Composure plate layers found to update"));
+    }
+}
+
 FReply SComfyUIPanel::OnApplyToActorsClicked()
 {
     if (CurrentPreviewImagePath.IsEmpty())
@@ -1258,6 +1429,49 @@ void SComfyUIPanel::LoadAndDisplayImage(const FString& FilePath)
     {
         PreviewImage->SetImage(ImageBrush.Get());
     }
+}
+FReply SComfyUIPanel::OnApplyToComposureClicked()
+{
+    if (CurrentPreviewImagePath.IsEmpty())
+    {
+        UpdateStatus(TEXT("Error: No preview image available"));
+        return FReply::Handled();
+    }
+    
+    UTexture2D* TextureToApply = nullptr;
+    
+    // Check if we already imported this exact image
+    if (LastImportedImagePath == CurrentPreviewImagePath && LastImportedTexture.IsValid())
+    {
+        // Reuse the existing texture
+        TextureToApply = LastImportedTexture.Get();
+        UE_LOG(LogTemp, Log, TEXT("ComfyUI: Reusing previously imported texture: %s"), *TextureToApply->GetPathName());
+    }
+    else
+    {
+        // Import as new permanent texture asset
+        FDateTime Now = FDateTime::Now();
+        FString TextureName = FString::Printf(TEXT("T_Composure_%s"), *Now.ToString(TEXT("%Y%m%d_%H%M%S")));
+        FString TextureAssetPath = UComfyUIBlueprintLibrary::GenerateUniqueAssetName(TEXT("/Game/GeneratedTextures"), TextureName);
+        
+        TextureToApply = UComfyUIBlueprintLibrary::ImportImageAsAsset(CurrentPreviewImagePath, TextureAssetPath);
+        if (!TextureToApply)
+        {
+            UpdateStatus(TEXT("Error: Failed to import texture"));
+            return FReply::Handled();
+        }
+        
+        // Cache it
+        LastImportedImagePath = CurrentPreviewImagePath;
+        LastImportedTexture = TextureToApply;
+        
+        UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Imported new texture as: %s"), *TextureAssetPath);
+    }
+    
+    // Apply texture to Composure plates
+    ApplyTextureToComposurePlates(TextureToApply);
+    
+    return FReply::Handled();
 }
 
 SComfyUIPanel::~SComfyUIPanel()

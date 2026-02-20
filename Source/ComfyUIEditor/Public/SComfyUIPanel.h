@@ -91,4 +91,11 @@ private:
     FString CurrentPreviewImagePath;
 
     FReply OnImportClicked();
+
+    //Composure
+    void ApplyTextureToComposurePlates(UTexture2D* Texture);
+    FReply OnApplyToComposureClicked();
+    FString LastImportedImagePath;
+    TWeakObjectPtr<UTexture2D> LastImportedTexture; 
+    
 };
