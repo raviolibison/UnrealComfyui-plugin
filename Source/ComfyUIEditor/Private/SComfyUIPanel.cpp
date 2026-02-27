@@ -36,6 +36,10 @@
 #include "CompositingElement.h"
 #include "ComposurePlayerCompositingTarget.h"
 #include "Kismet/GameplayStatics.h"
+#include "Json.h"
+#include "JsonUtilities.h"
+#include "Misc/Paths.h"
+#include "Misc/FileHelper.h"
 
 
 #define LOCTEXT_NAMESPACE "SComfyUIPanel"
@@ -392,6 +396,20 @@ void SComfyUIPanel::Construct(const FArguments& InArgs)
                     })
                     .ToolTipText(LOCTEXT("ApplyToComposureTooltip", "Apply texture to Composure plate layers"))
                 ]
+
+                // Generate 360 button - NEW!
+                + SHorizontalBox::Slot()
+                .AutoWidth()
+                .Padding(10, 0, 0, 0)
+                [
+                    SNew(SButton)
+                    .Text(LOCTEXT("Generate360Button", "Generate 360° HDRI"))
+                    .OnClicked(this, &SComfyUIPanel::OnGenerate360Clicked)
+                    .IsEnabled_Lambda([this]() { 
+                        return !LastGeneratedFilename.IsEmpty(); 
+                    })
+                    .ToolTipText(LOCTEXT("Generate360Tooltip", "Generate 360° panorama for scene lighting"))
+]
                 
                 // Save to Project button
                 + SHorizontalBox::Slot()
@@ -1374,6 +1392,91 @@ FReply SComfyUIPanel::OnApplyToActorsClicked()
     
     // Apply to all target actors
     ApplyMaterialToTargetActors(Texture);
+    
+    return FReply::Handled();
+}
+
+FReply SComfyUIPanel::OnGenerate360Clicked()
+{
+    if (CurrentPreviewImagePath.IsEmpty())
+    {
+        UpdateStatus(TEXT("Error: No preview image available"));
+        return FReply::Handled();
+    }
+    
+    // Extract just the filename from the full path
+    FString Filename = FPaths::GetCleanFilename(CurrentPreviewImagePath);
+    
+    UE_LOG(LogTemp, Log, TEXT("ComfyUI: Using image: %s"), *Filename);
+    
+    // Load the 360 workflow JSON
+    FString WorkflowPath = FPaths::ProjectPluginsDir() / TEXT("ComfyUI/Content/Workflows/360_Kontext.json");
+    FString WorkflowJson;
+    
+    if (!FFileHelper::LoadFileToString(WorkflowJson, *WorkflowPath))
+    {
+        UpdateStatus(TEXT("Error: Failed to load 360 workflow"));
+        UE_LOG(LogTemp, Error, TEXT("ComfyUI: Could not load workflow from: %s"), *WorkflowPath);
+        return FReply::Handled();
+    }
+    
+    // Parse the workflow
+    TSharedPtr<FJsonObject> WorkflowObj;
+    TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(WorkflowJson);
+    
+    if (!FJsonSerializer::Deserialize(Reader, WorkflowObj))
+    {
+        UpdateStatus(TEXT("Error: Failed to parse 360 workflow"));
+        UE_LOG(LogTemp, Error, TEXT("ComfyUI: Failed to parse JSON"));
+        return FReply::Handled();
+    }
+    
+    // Modify LoadImageOutput nodes (147 and 142)
+    TArray<TSharedPtr<FJsonValue>> Nodes = WorkflowObj->GetArrayField(TEXT("nodes"));
+    
+    for (TSharedPtr<FJsonValue> NodeVal : Nodes)
+    {
+        TSharedPtr<FJsonObject> Node = NodeVal->AsObject();
+        int32 NodeId = Node->GetIntegerField(TEXT("id"));
+        
+        if (NodeId == 147 || NodeId == 142)
+        {
+            TArray<TSharedPtr<FJsonValue>> Widgets = Node->GetArrayField(TEXT("widgets_values"));
+            
+            // Reference the file in ComfyUI's output folder
+            FString OutputReference = Filename + TEXT(" [output]");
+            Widgets[0] = MakeShared<FJsonValueString>(OutputReference);
+            
+            Node->SetArrayField(TEXT("widgets_values"), Widgets);
+            
+            UE_LOG(LogTemp, Log, TEXT("ComfyUI: Updated node %d to: %s"), NodeId, *OutputReference);
+        }
+    }
+    
+    // Convert back to JSON
+    FString ModifiedWorkflowJson;
+    TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&ModifiedWorkflowJson);
+    FJsonSerializer::Serialize(WorkflowObj.ToSharedRef(), Writer);
+    
+    // Get the subsystem and queue the workflow
+    if (GEditor && GEditor->GetEditorWorldContext().World())
+    {
+        UWorld* World = GEditor->GetEditorWorldContext().World();
+        UComfyUISubsystem* Subsystem = World->GetSubsystem<UComfyUISubsystem>();
+        
+        if (Subsystem)
+        {
+            UpdateStatus(TEXT("Generating 360° panorama..."));
+            UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Queueing 360 workflow with input: %s"), *Filename);
+            
+            Subsystem->QueuePrompt(ModifiedWorkflowJson);
+        }
+        else
+        {
+            UpdateStatus(TEXT("Error: ComfyUI subsystem not available"));
+            UE_LOG(LogTemp, Error, TEXT("ComfyUI: Subsystem not found"));
+        }
+    }
     
     return FReply::Handled();
 }

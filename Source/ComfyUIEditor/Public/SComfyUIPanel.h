@@ -47,10 +47,10 @@ private:
     int32 ConnectionAttempts = 0;
     FTimerHandle ConnectionTimerHandle;
     void PollComfyConnection();
-    void StartGeneration(); // <--- This declaration is required for the .cpp to work
+    void StartGeneration();
 
     // UI Callbacks
-    FReply OnStartComfyClicked(); // <--- This too
+    FReply OnStartComfyClicked();
     FReply OnGenerateClicked();
     void OnAutoApplyCheckChanged(ECheckBoxState NewState);
     void OnPromptTextChanged(const FText& NewText);
@@ -58,6 +58,7 @@ private:
     FReply OnAddSelectedClicked();
     FReply OnClearAllClicked();
     FReply OnApplyToActorsClicked();
+    FReply OnGenerate360Clicked();
 
     //Auto apply
     bool bAutoApplyEnabled = false;
