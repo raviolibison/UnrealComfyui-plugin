@@ -16,8 +16,8 @@ public:
 
 private:
     // UI State
-    FString PromptText;
-    FString NegativePromptText;
+    FString PromptText = TEXT("Beautiful tropical beach, big open foreground with tire tracks and puddles");
+    FString NegativePromptText = TEXT("cartoon, anime, low quality, blurry, distorted, unrealistic, people, vehicles");
     FString StatusText;
     bool bIsComfyReady = false; // <--- This was likely missing!
 
@@ -42,6 +42,12 @@ private:
     void OnHeightChanged(TSharedPtr<FString> NewSelection, ESelectInfo::Type SelectInfo);
     void OnCustomWidthChanged(int32 NewValue);
     void OnCustomHeightChanged(int32 NewValue);
+    
+    //360
+    FString Current360PromptId;
+    bool bIs360Generation = false;
+    void On360GenerationComplete(bool bSuccess, const FString& PromptId);
+    void Apply360ToSkyLight(UTexture2D* Texture360);
 
     // Polling & Connection Logic
     int32 ConnectionAttempts = 0;
@@ -90,7 +96,6 @@ private:
     FString CurrentPromptId;
     FString CurrentFilenamePrefix;
     FString CurrentPreviewImagePath;
-
     FReply OnImportClicked();
 
     //Composure

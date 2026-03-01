@@ -28,7 +28,8 @@ public class ComfyUIEditor : ModuleRules
                 "ImageWrapper",
                 "HTTP",
                 "Json",
-                "JsonUtilities"
+                "JsonUtilities",
+                "Engine"
             }
         );
         if (Target.bBuildEditor)

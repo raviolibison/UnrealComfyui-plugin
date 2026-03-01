@@ -1,3 +1,3 @@
 @echo off
 cd /d "%~dp0"
-call run_nvidia_gpu.bat
+call run_nvidia_gpu.bat --disable-auto-launch

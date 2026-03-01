@@ -31,15 +31,14 @@
 #include "Materials/Material.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Materials/MaterialInstanceConstant.h"
-#include "AssetRegistry/AssetRegistryModule.h"
-#include "UObject/SavePackage.h"
-#include "CompositingElement.h"
-#include "ComposurePlayerCompositingTarget.h"
 #include "Kismet/GameplayStatics.h"
-#include "Json.h"
-#include "JsonUtilities.h"
 #include "Misc/Paths.h"
 #include "Misc/FileHelper.h"
+#include "Engine/SkyLight.h"
+#include "Components/SkyLightComponent.h"
+#include "EngineUtils.h"
+#include "Engine/StaticMeshActor.h"
+
 
 
 #define LOCTEXT_NAMESPACE "SComfyUIPanel"
@@ -142,6 +141,7 @@ void SComfyUIPanel::Construct(const FArguments& InArgs)
             [
                 SNew(SEditableTextBox)
                 .HintText(LOCTEXT("PromptHint", "Describe the image..."))
+                .Text(FText::FromString(PromptText))
                 .OnTextChanged(this, &SComfyUIPanel::OnPromptTextChanged)
                 .MinDesiredWidth(400)
             ]
@@ -159,6 +159,7 @@ void SComfyUIPanel::Construct(const FArguments& InArgs)
             [
                 SNew(SEditableTextBox)
                 .HintText(LOCTEXT("NegPromptHint", "What to avoid..."))
+                .Text(FText::FromString(NegativePromptText))
                 .OnTextChanged(this, &SComfyUIPanel::OnNegativePromptTextChanged)
             ]
 
@@ -406,7 +407,7 @@ void SComfyUIPanel::Construct(const FArguments& InArgs)
                     .Text(LOCTEXT("Generate360Button", "Generate 360° HDRI"))
                     .OnClicked(this, &SComfyUIPanel::OnGenerate360Clicked)
                     .IsEnabled_Lambda([this]() { 
-                        return !LastGeneratedFilename.IsEmpty(); 
+                        return !CurrentPreviewImagePath.IsEmpty(); 
                     })
                     .ToolTipText(LOCTEXT("Generate360Tooltip", "Generate 360° panorama for scene lighting"))
 ]
@@ -1404,79 +1405,117 @@ FReply SComfyUIPanel::OnGenerate360Clicked()
         return FReply::Handled();
     }
     
-    // Extract just the filename from the full path
+    // Extract filename
     FString Filename = FPaths::GetCleanFilename(CurrentPreviewImagePath);
+    FString OutputReference = Filename + TEXT(" [output]");
     
     UE_LOG(LogTemp, Log, TEXT("ComfyUI: Using image: %s"), *Filename);
     
-    // Load the 360 workflow JSON
-    FString WorkflowPath = FPaths::ProjectPluginsDir() / TEXT("ComfyUI/Content/Workflows/360_Kontext.json");
-    FString WorkflowJson;
+    // Load the API format workflow
+    FString WorkflowPath = FPaths::ProjectPluginsDir() / TEXT("ComfyUI/ComfyUI_windows_portable/ComfyUI/user/default/workflows/360_Kontext-Small-API.json");
     
-    if (!FFileHelper::LoadFileToString(WorkflowJson, *WorkflowPath))
+    if (!FPaths::FileExists(WorkflowPath))
     {
-        UpdateStatus(TEXT("Error: Failed to load 360 workflow"));
-        UE_LOG(LogTemp, Error, TEXT("ComfyUI: Could not load workflow from: %s"), *WorkflowPath);
+        UpdateStatus(TEXT("Error: 360 workflow (API format) not found"));
+        UE_LOG(LogTemp, Error, TEXT("ComfyUI: Workflow not found at: %s"), *WorkflowPath);
         return FReply::Handled();
     }
     
-    // Parse the workflow
+    FString WorkflowJson;
+    if (!FFileHelper::LoadFileToString(WorkflowJson, *WorkflowPath))
+    {
+        UpdateStatus(TEXT("Error: Failed to load 360 workflow"));
+        return FReply::Handled();
+    }
+    
+    // Parse the API format workflow (object with string keys)
     TSharedPtr<FJsonObject> WorkflowObj;
     TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(WorkflowJson);
     
     if (!FJsonSerializer::Deserialize(Reader, WorkflowObj))
     {
         UpdateStatus(TEXT("Error: Failed to parse 360 workflow"));
-        UE_LOG(LogTemp, Error, TEXT("ComfyUI: Failed to parse JSON"));
         return FReply::Handled();
     }
     
-    // Modify LoadImageOutput nodes (147 and 142)
-    TArray<TSharedPtr<FJsonValue>> Nodes = WorkflowObj->GetArrayField(TEXT("nodes"));
-    
-    for (TSharedPtr<FJsonValue> NodeVal : Nodes)
+    // Update node 147
+    if (TSharedPtr<FJsonObject> Node147 = WorkflowObj->GetObjectField(TEXT("147")))
     {
-        TSharedPtr<FJsonObject> Node = NodeVal->AsObject();
-        int32 NodeId = Node->GetIntegerField(TEXT("id"));
-        
-        if (NodeId == 147 || NodeId == 142)
-        {
-            TArray<TSharedPtr<FJsonValue>> Widgets = Node->GetArrayField(TEXT("widgets_values"));
-            
-            // Reference the file in ComfyUI's output folder
-            FString OutputReference = Filename + TEXT(" [output]");
-            Widgets[0] = MakeShared<FJsonValueString>(OutputReference);
-            
-            Node->SetArrayField(TEXT("widgets_values"), Widgets);
-            
-            UE_LOG(LogTemp, Log, TEXT("ComfyUI: Updated node %d to: %s"), NodeId, *OutputReference);
-        }
+        TSharedPtr<FJsonObject> Inputs = Node147->GetObjectField(TEXT("inputs"));
+        Inputs->SetStringField(TEXT("image"), OutputReference);
+        UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Updated node 147 to: %s"), *OutputReference);
     }
     
-    // Convert back to JSON
+    // Update node 142
+    if (TSharedPtr<FJsonObject> Node142 = WorkflowObj->GetObjectField(TEXT("142")))
+    {
+        TSharedPtr<FJsonObject> Inputs = Node142->GetObjectField(TEXT("inputs"));
+        Inputs->SetStringField(TEXT("image"), OutputReference);
+        UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Updated node 142 to: %s"), *OutputReference);
+    }
+    
+    // Build the prompt wrapper
+    TSharedPtr<FJsonObject> Wrapper = MakeShared<FJsonObject>();
+    Wrapper->SetObjectField(TEXT("prompt"), WorkflowObj);
+    
+    // Serialize
     FString ModifiedWorkflowJson;
     TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&ModifiedWorkflowJson);
-    FJsonSerializer::Serialize(WorkflowObj.ToSharedRef(), Writer);
+    FJsonSerializer::Serialize(Wrapper.ToSharedRef(), Writer);
     
-    // Get the subsystem and queue the workflow
-    if (GEditor && GEditor->GetEditorWorldContext().World())
-    {
-        UWorld* World = GEditor->GetEditorWorldContext().World();
-        UComfyUISubsystem* Subsystem = World->GetSubsystem<UComfyUISubsystem>();
-        
-        if (Subsystem)
+    // Submit via HTTP
+    const UComfyUISettings* Settings = GetDefault<UComfyUISettings>();
+    FString BaseUrl = Settings ? Settings->BaseUrl : TEXT("http://127.0.0.1:8188");
+    
+    TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
+    Request->SetURL(BaseUrl + TEXT("/prompt"));
+    Request->SetVerb(TEXT("POST"));
+    Request->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
+    Request->SetContentAsString(ModifiedWorkflowJson);
+    
+    Request->OnProcessRequestComplete().BindLambda(
+        [this](FHttpRequestPtr, FHttpResponsePtr Response, bool bSucceeded)
         {
-            UpdateStatus(TEXT("Generating 360° panorama..."));
-            UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Queueing 360 workflow with input: %s"), *Filename);
-            
-            Subsystem->QueuePrompt(ModifiedWorkflowJson);
-        }
-        else
-        {
-            UpdateStatus(TEXT("Error: ComfyUI subsystem not available"));
-            UE_LOG(LogTemp, Error, TEXT("ComfyUI: Subsystem not found"));
-        }
-    }
+            if (bSucceeded && Response.IsValid() && EHttpResponseCodes::IsOk(Response->GetResponseCode()))
+            {
+                // Extract prompt ID from response
+                TSharedPtr<FJsonObject> JsonResponse;
+                TSharedRef<TJsonReader<>> JsonReader = TJsonReaderFactory<>::Create(Response->GetContentAsString());
+                
+                if (FJsonSerializer::Deserialize(JsonReader, JsonResponse) && JsonResponse.IsValid())
+                {
+                    Current360PromptId = JsonResponse->GetStringField(TEXT("prompt_id"));
+                    bIs360Generation = true; // Flag this as 360 generation
+                    
+                    UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Queued 360 workflow with prompt_id: %s"), *Current360PromptId);
+                    
+                    // Watch for completion
+                    if (FComfyUIModule* Module = FModuleManager::GetModulePtr<FComfyUIModule>(TEXT("ComfyUI")))
+                    {
+                        TSharedPtr<FComfyUIWebSocketHandler> WSHandler = Module->GetWebSocketHandler();
+                        if (WSHandler.IsValid())
+                        {
+                            FComfyUIWorkflowCompleteDelegateNative CompleteDelegate;
+                            CompleteDelegate.BindSP(SharedThis(this), &SComfyUIPanel::On360GenerationComplete);
+                            WSHandler->WatchPrompt(Current360PromptId, CompleteDelegate);
+                        }
+                    }
+                    
+                    UpdateStatus(TEXT("Generating 360° panorama..."));
+                }
+            }
+            else
+            {
+                UpdateStatus(TEXT("Error: Failed to queue 360 workflow"));
+                UE_LOG(LogTemp, Error, TEXT("ComfyUI: 360 workflow submission failed"));
+                if (Response.IsValid())
+                {
+                    UE_LOG(LogTemp, Error, TEXT("ComfyUI: Response: %s"), *Response->GetContentAsString());
+                }
+            }
+        });
+    
+    Request->ProcessRequest();
     
     return FReply::Handled();
 }
@@ -1575,6 +1614,149 @@ FReply SComfyUIPanel::OnApplyToComposureClicked()
     ApplyTextureToComposurePlates(TextureToApply);
     
     return FReply::Handled();
+}
+
+void SComfyUIPanel::On360GenerationComplete(bool bSuccess, const FString& PromptId)
+{
+    UE_LOG(LogTemp, Warning, TEXT("ComfyUI: 360 generation complete - Success: %d, PromptId: %s"), bSuccess, *PromptId);
+    
+    if (!bSuccess)
+    {
+        UpdateStatus(TEXT("Error: 360° generation failed"));
+        bIs360Generation = false;
+        return;
+    }
+    
+    UpdateStatus(TEXT("Loading 360° image..."));
+    
+    // Get the latest image with "Kontext_Upscale" prefix
+    FString ImagePath = UComfyUIBlueprintLibrary::GetLatestOutputImage(TEXT("Kontext_Upscale"));
+    
+    if (ImagePath.IsEmpty())
+    {
+        UpdateStatus(TEXT("Error: Could not find 360° output image"));
+        UE_LOG(LogTemp, Error, TEXT("ComfyUI: No image found with prefix 'Kontext_Upscale'"));
+        bIs360Generation = false;
+        return;
+    }
+    
+    UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Found 360° image: %s"), *ImagePath);
+    
+    // Import as permanent texture
+    FDateTime Now = FDateTime::Now();
+    FString TextureName = FString::Printf(TEXT("T_360_HDRI_%s"), *Now.ToString(TEXT("%Y%m%d_%H%M%S")));
+    FString TextureAssetPath = UComfyUIBlueprintLibrary::GenerateUniqueAssetName(TEXT("/Game/GeneratedTextures"), TextureName);
+    
+    UTexture2D* Texture360 = UComfyUIBlueprintLibrary::ImportImageAsAsset(ImagePath, TextureAssetPath);
+    
+    if (!Texture360)
+    {
+        UpdateStatus(TEXT("Error: Failed to import 360° texture"));
+        bIs360Generation = false;
+        return;
+    }
+    
+    // Configure texture for skylight use
+    Texture360->CompressionSettings = TC_HDR;
+    Texture360->SRGB = false;
+    Texture360->LODGroup = TEXTUREGROUP_Skybox;
+    Texture360->UpdateResource();
+    
+    UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Imported 360° texture: %s"), *TextureAssetPath);
+    
+    // Apply to SkyLight
+    Apply360ToSkyLight(Texture360);
+    
+    bIs360Generation = false;
+}
+
+void SComfyUIPanel::Apply360ToSkyLight(UTexture2D* Texture360)
+{
+    if (!GEditor || !GEditor->GetEditorWorldContext().World())
+    {
+        UpdateStatus(TEXT("Error: No editor world available"));
+        return;
+    }
+    
+    UWorld* World = GEditor->GetEditorWorldContext().World();
+    
+    // CLEANUP: Remove any existing AI-generated sky spheres
+    TArray<AActor*> ActorsToDestroy;
+    for (TActorIterator<AStaticMeshActor> It(World); It; ++It)
+    {
+        if (It->GetActorLabel().Contains(TEXT("AI_360_SkySphere")))
+        {
+            ActorsToDestroy.Add(*It);
+        }
+    }
+    
+    for (AActor* Actor : ActorsToDestroy)
+    {
+        World->DestroyActor(Actor);
+        UE_LOG(LogTemp, Log, TEXT("ComfyUI: Removed old sky sphere"));
+    }
+    
+    // Create a large inverted sphere with our 360° texture
+    AStaticMeshActor* SkySphere = World->SpawnActor<AStaticMeshActor>();
+    
+    UStaticMesh* SphereMesh = LoadObject<UStaticMesh>(nullptr, 
+        TEXT("/Engine/BasicShapes/Sphere.Sphere"));
+    
+    if (SkySphere && SphereMesh)
+    {
+        SkySphere->GetStaticMeshComponent()->SetStaticMesh(SphereMesh);
+        SkySphere->SetActorLabel(TEXT("AI_360_SkySphere"));
+        
+        // Make it huge and inverted
+        SkySphere->SetActorScale3D(FVector(-10000.0f, 10000.0f, 10000.0f));
+        
+        // Apply material with 360° texture
+        if (BaseMaterial)
+        {
+            UMaterialInstanceDynamic* SkyMaterial = UMaterialInstanceDynamic::Create(BaseMaterial, SkySphere);
+            SkyMaterial->SetTextureParameterValue(TEXT("BaseColorTexture"), Texture360);
+            SkySphere->GetStaticMeshComponent()->SetMaterial(0, SkyMaterial);
+            SkySphere->GetStaticMeshComponent()->SetCastShadow(false);
+        }
+        
+        UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Created 360° sky sphere"));
+    }
+    
+    // Find or create SkyLight
+    ASkyLight* SkyLight = nullptr;
+    for (TActorIterator<ASkyLight> It(World); It; ++It)
+    {
+        SkyLight = *It;
+        break;
+    }
+    
+    if (!SkyLight)
+    {
+        SkyLight = World->SpawnActor<ASkyLight>();
+        SkyLight->SetActorLabel(TEXT("AI_Generated_SkyLight"));
+        UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Created new SkyLight"));
+    }
+    
+    if (SkyLight && SkyLight->GetLightComponent())
+    {
+        USkyLightComponent* SkyLightComp = SkyLight->GetLightComponent();
+        
+        // Configure SkyLight to capture the scene
+        SkyLightComp->SourceType = ESkyLightSourceType::SLS_CapturedScene;
+        SkyLightComp->Intensity = 2.0f;
+        SkyLightComp->Mobility = EComponentMobility::Movable;
+        
+        // Capture
+        SkyLightComp->MarkRenderStateDirty();
+        SkyLightComp->RecaptureSky();
+        
+        UpdateStatus(TEXT("360° applied to scene lighting!"));
+        UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Applied 360° to SkyLight"));
+    }
+    else
+    {
+        UpdateStatus(TEXT("Error: Could not configure SkyLight"));
+    }
 }
 
 SComfyUIPanel::~SComfyUIPanel()
