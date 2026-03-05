@@ -4,6 +4,8 @@
 #include "WorkspaceMenuStructureModule.h"
 #include "ToolMenus.h"
 #include "Widgets/Docking/SDockTab.h"
+#include "ComfyUISettings.h"
+#include "ISettingsModule.h" 
 
 #define LOCTEXT_NAMESPACE "FComfyUIEditorModule"
 
@@ -12,6 +14,15 @@ const FName FComfyUIEditorModule::ComfyUITabName = FName("ComfyUIImageGenerator"
 void FComfyUIEditorModule::StartupModule()
 {
     UE_LOG(LogTemp, Warning, TEXT("ComfyUI Editor Module Started"));
+    
+    if (ISettingsModule* SettingsModule = FModuleManager::GetModulePtr<ISettingsModule>("Settings"))
+    {
+        SettingsModule->RegisterSettings("Project", "Plugins", "ComfyUI",
+            LOCTEXT("ComfyUISettingsName", "ComfyUI"),
+            LOCTEXT("ComfyUISettingsDescription", "Configure the ComfyUI plugin settings"),
+            GetMutableDefault<UComfyUISettings>()
+        );
+    }
 
     // Register tab spawner
     FGlobalTabmanager::Get()->RegisterNomadTabSpawner(
@@ -28,6 +39,12 @@ void FComfyUIEditorModule::StartupModule()
 
 void FComfyUIEditorModule::ShutdownModule()
 {
+    
+    if (ISettingsModule* SettingsModule = FModuleManager::GetModulePtr<ISettingsModule>("Settings"))
+    {
+        SettingsModule->UnregisterSettings("Project", "Plugins", "ComfyUI");
+    }
+    
     FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(ComfyUITabName);
 
     UToolMenus::UnRegisterStartupCallback(this);
