@@ -38,7 +38,7 @@
 #include "Components/SkyLightComponent.h"
 #include "EngineUtils.h"
 #include "Engine/StaticMeshActor.h"
-
+#include "Interfaces/IPluginManager.h"
 
 
 #define LOCTEXT_NAMESPACE "SComfyUIPanel"
@@ -1412,7 +1412,11 @@ FReply SComfyUIPanel::OnGenerate360Clicked()
     UE_LOG(LogTemp, Log, TEXT("ComfyUI: Using image: %s"), *Filename);
     
     // Load the API format workflow
-    FString WorkflowPath = FPaths::ProjectPluginsDir() / TEXT("ComfyUI/ComfyUI_windows_portable/ComfyUI/user/default/workflows/360_Kontext-Small-API.json");
+    FString WorkflowPath;
+    if (const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("ComfyUI")))
+    {
+        WorkflowPath = FPaths::Combine(Plugin->GetBaseDir(), TEXT("ComfyUI_windows_portable/ComfyUI/user/default/workflows/360_Kontext-Small-API.json"));
+    }
     
     if (!FPaths::FileExists(WorkflowPath))
     {

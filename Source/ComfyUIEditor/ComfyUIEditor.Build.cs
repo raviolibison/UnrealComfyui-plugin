@@ -29,7 +29,8 @@ public class ComfyUIEditor : ModuleRules
                 "HTTP",
                 "Json",
                 "JsonUtilities",
-                "Engine"
+                "Engine",
+                "projects"
             }
         );
         if (Target.bBuildEditor)
