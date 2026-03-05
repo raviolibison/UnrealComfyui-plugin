@@ -1717,10 +1717,26 @@ void SComfyUIPanel::Apply360ToSkyLight(UTexture2D* Texture360)
         // Apply material with 360° texture
         if (BaseMaterial)
         {
-            UMaterialInstanceDynamic* SkyMaterial = UMaterialInstanceDynamic::Create(BaseMaterial, SkySphere);
-            SkyMaterial->SetTextureParameterValue(TEXT("BaseColorTexture"), Texture360);
-            SkySphere->GetStaticMeshComponent()->SetMaterial(0, SkyMaterial);
+            UMaterialInstanceDynamic* SkyMat = UMaterialInstanceDynamic::Create(BaseMaterial, SkySphere);
+    
+            UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Texture360 valid: %d, name: %s, size: %dx%d"), 
+                Texture360 != nullptr,
+                *Texture360->GetName(),
+                Texture360->GetSizeX(),
+                Texture360->GetSizeY());
+    
+            SkyMat->SetTextureParameterValue(TEXT("BaseColorTexture"), Texture360);
+            SkySphere->GetStaticMeshComponent()->SetMaterial(0, SkyMat);
             SkySphere->GetStaticMeshComponent()->SetCastShadow(false);
+    
+            // Log what parameter names the material actually has
+            TArray<FMaterialParameterInfo> ParamInfos;
+            TArray<FGuid> ParamGuids;
+            SkyMat->GetAllTextureParameterInfo(ParamInfos, ParamGuids);
+            for (const auto& Info : ParamInfos)
+            {
+                UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Material has texture param: '%s'"), *Info.Name.ToString());
+            }
         }
         
         UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Created 360° sky sphere"));
