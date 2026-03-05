@@ -15,7 +15,6 @@ void FComfyUIModule::StartupModule()
 
     // Create WebSocket handler
     WebSocketHandler = MakeShared<FComfyUIWebSocketHandler>();
-    
 }
 
 void FComfyUIModule::ShutdownModule()
@@ -43,79 +42,88 @@ bool FComfyUIModule::EnsurePortableRunning()
         return true;
     }
 
-    // 2. Check settings
+    // 2. Only auto-start if the setting is enabled
     const UComfyUISettings* Settings = GetDefault<UComfyUISettings>();
     if (!Settings || !Settings->bAutoStartPortable)
     {
         return false;
     }
 
-    FString Executable = Settings->PortableExecutable; // e.g., "start_from_unreal.bat"
+    return LaunchPortable();
+}
+
+bool FComfyUIModule::ForceStartPortable()
+{
+    // 1. If already running, do nothing
+    if (PortableHandle.IsValid() && FPlatformProcess::IsProcRunning(PortableHandle))
+    {
+        UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Already running"));
+        return true;
+    }
+
+    return LaunchPortable();
+}
+
+bool FComfyUIModule::LaunchPortable()
+{
+    const UComfyUISettings* Settings = GetDefault<UComfyUISettings>();
+    if (!Settings)
+    {
+        UE_LOG(LogTemp, Error, TEXT("ComfyUI: Settings not available"));
+        return false;
+    }
+
+    FString Executable = Settings->PortableExecutable;
     if (Executable.IsEmpty())
     {
+        UE_LOG(LogTemp, Error, TEXT("ComfyUI: PortableExecutable is empty"));
         return false;
     }
 
-    FString WorkingDir = Settings->PortableRoot;
-    FString FullExecutablePath;
-
-    // 3. Logic to find the file
-    // A. If the user manually set a path in Project Settings, respect it absolutely.
-    if (!WorkingDir.IsEmpty())
+    // Use the effective root (auto-detects if PortableRoot is empty)
+    FString WorkingDir = Settings->GetEffectivePortableRoot();
+    
+    UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Effective PortableRoot: %s"), *WorkingDir);
+    
+    if (WorkingDir.IsEmpty())
     {
-        FullExecutablePath = FPaths::Combine(WorkingDir, Executable);
+        UE_LOG(LogTemp, Error, TEXT("ComfyUI: Could not determine PortableRoot"));
+        return false;
     }
-    // B. Otherwise, auto-detect the folder inside the Plugin directory
-    else if (const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("ComfyUI")))
+
+    FString FullExecutablePath = FPaths::Combine(WorkingDir, Executable);
+
+    // If not found at the direct path, try searching
+    if (!FPaths::FileExists(FullExecutablePath))
     {
-        FString PluginDir = Plugin->GetBaseDir();
+        UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Executable not found at: %s, searching..."), *FullExecutablePath);
         
-        // List of common folder names to check
-        TArray<FString> CandidateFolders;
-        CandidateFolders.Add(TEXT("ComfyUIPortable"));
-        CandidateFolders.Add(TEXT("ComfyUI_windows_portable"));
-        CandidateFolders.Add(TEXT("ComfyUI"));
-        
-        bool bFound = false;
-
-        // Check specific folders first
-        for (const FString& FolderName : CandidateFolders)
+        // Try plugin directory search as fallback
+        if (const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("ComfyUI")))
         {
-            FString TestDir = FPaths::Combine(PluginDir, FolderName);
-            FString TestExe = FPaths::Combine(TestDir, Executable);
-
-            if (FPaths::FileExists(TestExe))
+            FString PluginDir = Plugin->GetBaseDir();
+            TArray<FString> FoundFiles;
+            IFileManager::Get().FindFilesRecursive(FoundFiles, *PluginDir, *Executable, true, false);
+            if (FoundFiles.Num() > 0)
             {
-                WorkingDir = TestDir;
-                FullExecutablePath = TestExe;
-                bFound = true;
-                UE_LOG(LogTemp, Log, TEXT("ComfyUI: Auto-detected installation at: %s"), *WorkingDir);
-                break;
+                FullExecutablePath = FoundFiles[0];
+                WorkingDir = FPaths::GetPath(FullExecutablePath);
+                UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Found executable via recursive search: %s"), *FullExecutablePath);
             }
         }
-
-        // C. Fallback: Search the entire plugin directory recursively
-        if (!bFound)
-        {
-             TArray<FString> FoundFiles;
-             IFileManager::Get().FindFilesRecursive(FoundFiles, *PluginDir, *Executable, true, false);
-             if (FoundFiles.Num() > 0)
-             {
-                 FullExecutablePath = FoundFiles[0]; // First match
-                 WorkingDir = FPaths::GetPath(FullExecutablePath);
-                 UE_LOG(LogTemp, Log, TEXT("ComfyUI: Found executable via search at: %s"), *FullExecutablePath);
-             }
-        }
     }
 
-    // 4. Validation
-    if (WorkingDir.IsEmpty() || !FPaths::FileExists(FullExecutablePath))
+    // Final validation
+    if (!FPaths::FileExists(FullExecutablePath))
     {
-        UE_LOG(LogTemp, Error, TEXT("ComfyUI: Could not find '%s' in Plugin directory. Please check your folder structure or Project Settings."), *Executable);
+        UE_LOG(LogTemp, Error, TEXT("ComfyUI: Could not find executable '%s'. Tried path: %s"), *Executable, *FullExecutablePath);
+        UE_LOG(LogTemp, Error, TEXT("ComfyUI: Please set the correct 'Portable Root Path' in Project Settings > Plugins > ComfyUI"));
         return false;
     }
 
-    // 5. Launch
+    UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Launching: %s (working dir: %s)"), *FullExecutablePath, *WorkingDir);
+
+    // Launch
     PortableHandle = FPlatformProcess::CreateProc(
         *FullExecutablePath,
         *Settings->PortableArgs,
@@ -123,6 +131,15 @@ bool FComfyUIModule::EnsurePortableRunning()
         nullptr, 0,
         *WorkingDir,
         nullptr);
+
+    if (PortableHandle.IsValid())
+    {
+        UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Process launched successfully"));
+    }
+    else
+    {
+        UE_LOG(LogTemp, Error, TEXT("ComfyUI: Failed to create process"));
+    }
 
     return PortableHandle.IsValid();
 }

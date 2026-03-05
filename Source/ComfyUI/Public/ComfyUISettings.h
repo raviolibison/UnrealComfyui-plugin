@@ -21,7 +21,8 @@ public:
     bool bAutoStartPortable = false;
 
     UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Portable",
-        meta = (DisplayName = "Portable Root Path"))
+        meta = (DisplayName = "Portable Root Path",
+        ToolTip = "Leave empty to auto-detect from plugin directory"))
     FString PortableRoot;
 
     UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Portable",
@@ -31,4 +32,7 @@ public:
     UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Portable",
         meta = (DisplayName = "Portable Arguments"))
     FString PortableArgs;
+
+    /** Returns PortableRoot if set, otherwise auto-detects from plugin directory */
+    FString GetEffectivePortableRoot() const;
 };

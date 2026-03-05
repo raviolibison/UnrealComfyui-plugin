@@ -523,7 +523,7 @@ FReply SComfyUIPanel::OnStartComfyClicked()
     // 1. Launch the process
     if (FComfyUIModule* Module = FModuleManager::GetModulePtr<FComfyUIModule>(TEXT("ComfyUI")))
     {
-        if (Module->EnsurePortableRunning())
+        if (Module->ForceStartPortable())
         {
             UpdateStatus(TEXT("Launching ComfyUI..."));
             

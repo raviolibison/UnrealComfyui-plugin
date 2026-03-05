@@ -434,7 +434,7 @@ FString UComfyUIBlueprintLibrary::BuildFlux2WorkflowJson(const FComfyUIFlux2Work
 FString UComfyUIBlueprintLibrary::GetComfyUIOutputFolder()
 {
     const UComfyUISettings* Settings = GetDefault<UComfyUISettings>();
-    FString Root = Settings ? Settings->PortableRoot : TEXT("");
+    FString Root = Settings ? Settings->GetEffectivePortableRoot() : TEXT("");
 
     if (Root.IsEmpty())
     {
