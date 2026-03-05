@@ -1,5 +1,8 @@
 ComfyUI_windows_portable/
 
+Binaries/
+Intermediate/
+
 
 # Unreal build artifacts
 Intermediate/
