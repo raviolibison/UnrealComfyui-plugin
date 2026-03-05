@@ -1,0 +1,20 @@
+ComfyUI_windows_portable/
+
+
+# Unreal build artifacts
+Intermediate/
+Binaries/
+Build/
+Saved/
+DerivedDataCache/
+*.sln
+*.suo
+
+# IDE
+.vs/
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
