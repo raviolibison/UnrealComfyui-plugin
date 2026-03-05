@@ -1666,6 +1666,13 @@ void SComfyUIPanel::On360GenerationComplete(bool bSuccess, const FString& Prompt
     Texture360->LODGroup = TEXTUREGROUP_Skybox;
     Texture360->UpdateResource();*/
     
+    Texture360->SetForceMipLevelsToBeResident(30.0f);
+    Texture360->WaitForStreaming();
+    
+    Texture360->SRGB = true;
+    Texture360->UpdateResource();
+    FlushRenderingCommands();
+    
     UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Imported 360° texture: %s"), *TextureAssetPath);
     
     // Apply to SkyLight

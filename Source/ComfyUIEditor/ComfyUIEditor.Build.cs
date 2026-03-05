@@ -30,7 +30,8 @@ public class ComfyUIEditor : ModuleRules
                 "Json",
                 "JsonUtilities",
                 "Engine",
-                "projects"
+                "projects",
+                "RenderCore"
             }
         );
         if (Target.bBuildEditor)
