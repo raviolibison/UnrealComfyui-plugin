@@ -10,6 +10,8 @@ class COMFYUI_API UComfyUISettings : public UDeveloperSettings
     GENERATED_BODY()
 
 public:
+    UComfyUISettings();
+    
     UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Connection",
         meta = (DisplayName = "Base URL"))
     FString BaseUrl = TEXT("http://127.0.0.1:8188");
