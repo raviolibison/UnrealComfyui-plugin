@@ -17,7 +17,7 @@ FString UComfyUISettings::GetEffectivePortableRoot() const
 	}
 
 	// Auto-detect from plugin directory
-	TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("ComfyUI"));
+	TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("UnrealComfyui-plugin"));
 	if (Plugin.IsValid())
 	{
 		FString PluginBaseDir = Plugin->GetBaseDir();
