@@ -47,7 +47,8 @@ private:
     FString Current360PromptId;
     bool bIs360Generation = false;
     void On360GenerationComplete(bool bSuccess, const FString& PromptId);
-    void Apply360ToSkyLight(UTexture2D* Texture360);
+    void Import360Image(const FString& ImagePath);
+    //void Apply360ToSkyLight(UTexture2D* Texture360);
 
     // Polling & Connection Logic
     int32 ConnectionAttempts = 0;

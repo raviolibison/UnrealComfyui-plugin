@@ -824,8 +824,8 @@ FReply SComfyUIPanel::OnImportClicked()
         LastImportedTexture.Reset(); 
     }
     
-    // Clear preview path so user can't accidentally import twice
-    CurrentPreviewImagePath.Empty();
+    // Clear preview path so user can't accidentally import twice - Not useful if the user does things in a different ordar than intended...
+    //CurrentPreviewImagePath.Empty();
     
     return FReply::Handled();
 }
@@ -1616,7 +1616,7 @@ FReply SComfyUIPanel::OnApplyToComposureClicked()
     return FReply::Handled();
 }
 
-void SComfyUIPanel::On360GenerationComplete(bool bSuccess, const FString& PromptId)
+/*void SComfyUIPanel::On360GenerationComplete(bool bSuccess, const FString& PromptId)
 {
     UE_LOG(LogTemp, Warning, TEXT("ComfyUI: 360 generation complete - Success: %d, PromptId: %s"), bSuccess, *PromptId);
     
@@ -1668,9 +1668,65 @@ void SComfyUIPanel::On360GenerationComplete(bool bSuccess, const FString& Prompt
     Apply360ToSkyLight(Texture360);
     
     bIs360Generation = false;
+}*/
+
+void SComfyUIPanel::On360GenerationComplete(bool bSuccess, const FString& PromptId)
+{
+    UE_LOG(LogTemp, Warning, TEXT("ComfyUI: 360 generation complete - Success: %d, PromptId: %s"), bSuccess, *PromptId);
+
+    if (!bSuccess)
+    {
+        UpdateStatus(TEXT("Error: 360° generation failed"));
+        bIs360Generation = false;
+        return;
+    }
+
+    UpdateStatus(TEXT("Loading 360° image..."));
+
+    FString ImagePath = UComfyUIBlueprintLibrary::GetLatestOutputImage(TEXT("Kontext_Upscale"));
+
+    if (ImagePath.IsEmpty())
+    {
+        UpdateStatus(TEXT("Error: Could not find 360° output image"));
+        UE_LOG(LogTemp, Error, TEXT("ComfyUI: No image found with prefix 'Kontext_Upscale'"));
+        bIs360Generation = false;
+        return;
+    }
+
+    UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Found 360° image: %s"), *ImagePath);
+
+    CurrentPreviewImagePath = ImagePath;
+    Import360Image(ImagePath);
+
+    // Apply360ToSkyLight(Texture360); // TODO: re-enable when sky sphere is ready
+
+    bIs360Generation = false;
 }
 
-void SComfyUIPanel::Apply360ToSkyLight(UTexture2D* Texture360)
+void SComfyUIPanel::Import360Image(const FString& ImagePath)
+{
+    FDateTime Now = FDateTime::Now();
+    FString TextureName = FString::Printf(TEXT("T_360_HDRI_%s"), *Now.ToString(TEXT("%Y%m%d_%H%M%S")));
+    FString TextureAssetPath = UComfyUIBlueprintLibrary::GenerateUniqueAssetName(TEXT("/Game/GeneratedTextures"), TextureName);
+
+    UTexture2D* Texture360 = UComfyUIBlueprintLibrary::ImportImageAsAsset(ImagePath, TextureAssetPath);
+
+    if (!Texture360)
+    {
+        UpdateStatus(TEXT("Error: Failed to import 360° texture"));
+        UE_LOG(LogTemp, Error, TEXT("ComfyUI: ImportImageAsAsset failed for: %s"), *ImagePath);
+        return;
+    }
+
+    UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Auto-imported 360° texture: %s"), *TextureAssetPath);
+
+    LastImportedImagePath = ImagePath;
+    LastImportedTexture = Texture360;
+
+    UpdateStatus(FString::Printf(TEXT("360° panorama imported: %s"), *FPaths::GetBaseFilename(TextureAssetPath)));
+}
+
+/*void SComfyUIPanel::Apply360ToSkyLight(UTexture2D* Texture360)
 {
     if (!GEditor || !GEditor->GetEditorWorldContext().World())
     {
@@ -1757,7 +1813,7 @@ void SComfyUIPanel::Apply360ToSkyLight(UTexture2D* Texture360)
     {
         UpdateStatus(TEXT("Error: Could not configure SkyLight"));
     }
-}
+}*/
 
 SComfyUIPanel::~SComfyUIPanel()
 {
