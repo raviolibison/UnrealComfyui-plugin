@@ -660,40 +660,31 @@ void SComfyUIPanel::StartGeneration()
 
 void SComfyUIPanel::StartImg2Img()
 {
-    FString Filename = FPaths::GetCleanFilename(CurrentPreviewImagePath);
-    FString OutputReference = Filename + TEXT(" [output]");
-
     TSharedPtr<FJsonObject> WorkflowObj;
-    if (!LoadWorkflowFromFile(TEXT("workflows/img2img-API.json"), WorkflowObj))
+    if (!LoadWorkflowFromFile(TEXT("ComfyUI_windows_portable/ComfyUI/user/default/workflows/img2img-API.json"), WorkflowObj))
     {
         UpdateStatus(TEXT("Error: img2img workflow file not found"));
         return;
     }
 
-    // --- Patch your workflow node IDs here ---
-    // Replace "YOUR_LOAD_IMAGE_NODE_ID" with the actual node ID from your API export.
+    FString Filename = FPaths::GetCleanFilename(CurrentPreviewImagePath);
+    FString OutputReference = Filename + TEXT(" [output]");
 
-    if (TSharedPtr<FJsonObject> ImageNode = WorkflowObj->GetObjectField(TEXT("YOUR_LOAD_IMAGE_NODE_ID")))
+    // Patch input image - node 32
+    if (TSharedPtr<FJsonObject> ImageNode = WorkflowObj->GetObjectField(TEXT("32")))
     {
         ImageNode->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("image"), OutputReference);
     }
 
-    if (TSharedPtr<FJsonObject> PromptNode = WorkflowObj->GetObjectField(TEXT("YOUR_CLIP_TEXT_NODE_ID")))
+    // Patch prompt - node 2
+    if (TSharedPtr<FJsonObject> PromptNode = WorkflowObj->GetObjectField(TEXT("2")))
     {
         PromptNode->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("text"), PromptText);
     }
 
-    if (TSharedPtr<FJsonObject> SamplerNode = WorkflowObj->GetObjectField(TEXT("YOUR_KSAMPLER_NODE_ID")))
-    {
-        SamplerNode->GetObjectField(TEXT("inputs"))->SetNumberField(TEXT("denoise"), Img2ImgStrength);
-        SamplerNode->GetObjectField(TEXT("inputs"))->SetNumberField(
-            TEXT("noise_seed"), FMath::Abs((int32)(FDateTime::Now().GetTicks() % MAX_int32)));
-    }
-    // --- End patch ---
-
     FComfyWorkflowParams WorkflowParams;
     WorkflowParams.WorkflowJson   = SerializeWorkflow(WorkflowObj);
-    WorkflowParams.OutputPrefix   = TEXT("UE_Img2Img");
+    WorkflowParams.OutputPrefix   = TEXT("Flux2-Klein-Edit");
     WorkflowParams.RunningStatus  = TEXT("Running img2img...");
     WorkflowParams.CompleteStatus = TEXT("Img2Img complete! Save to project or run again.");
     WorkflowParams.bUpdatePreview = true;
@@ -708,7 +699,7 @@ void SComfyUIPanel::Start360Generation()
     FString OutputReference = Filename + TEXT(" [output]");
 
     TSharedPtr<FJsonObject> WorkflowObj;
-    if (!LoadWorkflowFromFile(TEXT("workflows/360_Kontext-Small-API.json"), WorkflowObj))
+    if (!LoadWorkflowFromFile(TEXT("ComfyUI_windows_portable/ComfyUI/user/default/workflows/360_Kontext-Small-API.json"), WorkflowObj))
     {
         UpdateStatus(TEXT("Error: 360 workflow file not found"));
         return;

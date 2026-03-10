@@ -115,15 +115,18 @@ bool FComfyUIModule::LaunchPortable()
     UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Launching python: %s"), *PythonPath);
     UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Args: %s"), *Args);
 
-    FString ComfyUIDir = FPaths::Combine(WorkingDir, TEXT("ComfyUI"));
+    FString BatPath = FPaths::Combine(WorkingDir, TEXT("start_from_unreal.bat"));
+    FString FinalBat = BatPath.Replace(TEXT("/"), TEXT("\\"));
 
     PortableHandle = FPlatformProcess::CreateProc(
-        *PythonPath.Replace(TEXT("/"), TEXT("\\")),
-        *Args,
+        TEXT("cmd.exe"),
+        *FString::Printf(TEXT("/c \"%s\""), *FinalBat),
         true, false, false,
         nullptr, 0,
-        *ComfyUIDir.Replace(TEXT("/"), TEXT("\\")),  // run from ComfyUI/ not portable root
+        *WorkingDir.Replace(TEXT("/"), TEXT("\\")),
         nullptr);
+    
+    
     if (PortableHandle.IsValid())
     {
         UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Launched successfully"));
