@@ -8,7 +8,6 @@
 // ============================================================================
 // FComfyWorkflowParams
 // A small descriptor that travels with every workflow submission.
-// It tells OnWorkflowComplete what to search for and what to do with the result.
 // ============================================================================
 struct FComfyWorkflowParams
 {
@@ -27,8 +26,10 @@ struct FComfyWorkflowParams
     /** If true, the output image replaces CurrentPreviewImagePath and updates the preview */
     bool bUpdatePreview = true;
 
-    /** If true and TargetActors are set, auto-applies the result texture to actors */
-    bool bAutoApply = false;
+    /** If true, auto-imports the result to the UE project (used for 360 generation) */
+    bool bAutoImport = false;
+    
+    bool bTargetPreviewB = false;
 };
 
 // ============================================================================
@@ -51,10 +52,17 @@ private:
     FString NegativePromptText = TEXT("cartoon, anime, low quality, blurry, distorted, unrealistic, people, vehicles");
     FString StatusText;
     bool bIsComfyReady = false;
-    float Img2ImgStrength = 0.75f;
 
-    TSharedPtr<class SImage> PreviewImage;
-    TSharedPtr<FSlateBrush> ImageBrush;
+    // Preview A — text2img / browsed image
+    TSharedPtr<class SImage> PreviewImageA;
+    TSharedPtr<FSlateBrush> ImageBrushA;
+    FString PreviewImagePathA;
+
+    // Preview B — img2img result
+    TSharedPtr<class SImage> PreviewImageB;
+    TSharedPtr<FSlateBrush> ImageBrushB;
+    FString PreviewImagePathB;
+    
     TWeakPtr<SComfyUIPanel> WeakThis;
 
     // Resolution controls
@@ -65,64 +73,45 @@ private:
     int32 CustomWidth = 1024;
     int32 CustomHeight = 1024;
 
-    // Target actors
-    TArray<TWeakObjectPtr<AActor>> TargetActors;
-    bool bAutoApplyEnabled = false;
-
     // Current generation state
-    FString CurrentPreviewImagePath;
     FString CurrentPromptId;
     FString CurrentFilenamePrefix = TEXT("UE_Editor");
 
-    // Material
-    UMaterial* BaseMaterial = nullptr;
-    TMap<TWeakObjectPtr<AActor>, UMaterialInstanceDynamic*> ActorMaterialMap;
-
-    // Composure
-    FString LastImportedImagePath;
-    TWeakObjectPtr<UTexture2D> LastImportedTexture;
+    // Img2Img input — set via file picker, falls back to preview image
+    FString Img2ImgInputPath;
+    FString Img2ImgPromptText = TEXT("Edit the image...");
 
     // Connection polling
     int32 ConnectionAttempts = 0;
     FTimerHandle ConnectionTimerHandle;
 
+    // Composure
+    FString LastImportedImagePath;
+    TWeakObjectPtr<UTexture2D> LastImportedTexture;
+
     // -------------------------------------------------------------------------
     // Generic Workflow System
     // -------------------------------------------------------------------------
-
-    /**
-     * The single submission function used by ALL workflows.
-     * Wraps the JSON, POSTs to /prompt, registers the WebSocket watcher,
-     * and carries Params through to OnWorkflowComplete via a lambda capture.
-     */
     void SubmitWorkflow(const FComfyWorkflowParams& Params);
-
-    /**
-     * The single completion callback used by ALL workflows.
-     * Params tells it what prefix to search for and what to do with the result.
-     */
     void OnWorkflowComplete(bool bSuccess, const FString& PromptId, FComfyWorkflowParams Params);
 
     // -------------------------------------------------------------------------
     // Workflow Builders
-    // Each one constructs an FComfyWorkflowParams and calls SubmitWorkflow.
     // -------------------------------------------------------------------------
-    void StartGeneration();     // Standard FLUX.2 text-to-image
-    void StartImg2Img();        // Img2Img from current preview
-    void Start360Generation();  // 360 HDRI from current preview
+    void StartGeneration();
+    void StartImg2Img();
+    void Start360Generation(const FString& SourcePath);
 
     // -------------------------------------------------------------------------
     // UI Callbacks
     // -------------------------------------------------------------------------
     FReply OnStartComfyClicked();
     FReply OnGenerateClicked();
+    FReply OnImg2ImgBrowseClicked();
     FReply OnImg2ImgClicked();
-    FReply OnGenerate360Clicked();
-    FReply OnApplyToActorsClicked();
-    FReply OnApplyToComposureClicked();
-    FReply OnImportClicked();
-    FReply OnAddSelectedClicked();
-    FReply OnClearAllClicked();
+    FReply OnGenerate360Clicked(FString SourcePath);
+    FReply OnApplyToComposureClicked(FString SourcePath);
+    FReply OnImportClicked(FString SourcePath);
 
     void OnPromptTextChanged(const FText& NewText);
     void OnNegativePromptTextChanged(const FText& NewText);
@@ -130,32 +119,17 @@ private:
     void OnHeightChanged(TSharedPtr<FString> NewSelection, ESelectInfo::Type SelectInfo);
     void OnCustomWidthChanged(int32 NewValue);
     void OnCustomHeightChanged(int32 NewValue);
-    void OnAutoApplyCheckChanged(ECheckBoxState NewState);
-
-    // -------------------------------------------------------------------------
-    // Post-completion actions (called from OnWorkflowComplete)
-    // -------------------------------------------------------------------------
-    void Apply360ToSkyLight(UTexture2D* Texture360);
-    void ApplyMaterialToTargetActors(UTexture2D* Texture);
-    void ApplyTextureToComposurePlates(UTexture2D* Texture);
 
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
     void PollComfyConnection();
     void UpdateStatus(const FString& Status);
-    void LoadAndDisplayImage(const FString& FilePath);
-    void LoadBaseMaterial();
-    TArray<AActor*> GetSelectedActors();
-    void AddSelectedActorsToList();
-    void ClearTargetActors();
-    void RemoveActorFromList(AActor* Actor);
-    UMeshComponent* GetMeshComponentFromActor(AActor* Actor);
-    bool IsActorValidForMaterial(AActor* Actor);
+    void LoadAndDisplayImage(const FString& FilePath, bool bPreviewB);
+    void ImportImageToProject(const FString& ImagePath, const FString& AssetNamePrefix);
+    void ApplyTextureToComposurePlates(UTexture2D* Texture);
+    FString GetComfyInputFolder() const;
 
-    /** Loads a workflow JSON file from the plugin's workflows/ folder */
     bool LoadWorkflowFromFile(const FString& RelativePath, TSharedPtr<FJsonObject>& OutWorkflow);
-
-    /** Serializes a workflow object to a JSON string */
     FString SerializeWorkflow(const TSharedPtr<FJsonObject>& WorkflowObj);
 };
