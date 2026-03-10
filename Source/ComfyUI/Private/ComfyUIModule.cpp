@@ -73,72 +73,64 @@ bool FComfyUIModule::LaunchPortable()
         return false;
     }
 
-    FString Executable = Settings->PortableExecutable;
-    if (Executable.IsEmpty())
+    // Use plugin-relative path by default, override from settings only if explicitly set
+    FString WorkingDir;
+    if (!Settings->PortableRoot.IsEmpty())
     {
-        UE_LOG(LogTemp, Error, TEXT("ComfyUI: PortableExecutable is empty"));
-        return false;
+        WorkingDir = Settings->PortableRoot;
+        UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Using custom PortableRoot from settings: %s"), *WorkingDir);
+    }
+    else
+    {
+        if (const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("ComfyUI")))
+        {
+            WorkingDir = FPaths::Combine(Plugin->GetBaseDir(), TEXT("ComfyUI_windows_portable"));
+        }
+        UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Using auto-detected PortableRoot: %s"), *WorkingDir);
     }
 
-    // Use the effective root (auto-detects if PortableRoot is empty)
-    FString WorkingDir = Settings->GetEffectivePortableRoot();
-    
-    UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Effective PortableRoot: %s"), *WorkingDir);
-    
     if (WorkingDir.IsEmpty())
     {
         UE_LOG(LogTemp, Error, TEXT("ComfyUI: Could not determine PortableRoot"));
         return false;
     }
 
-    FString FullExecutablePath = FPaths::Combine(WorkingDir, Executable);
+    FString PythonPath = FPaths::Combine(WorkingDir, TEXT("python_embeded/python.exe"));
+    FString ScriptPath = FPaths::Combine(WorkingDir, TEXT("ComfyUI/main.py"));
 
-    // If not found at the direct path, try searching
-    if (!FPaths::FileExists(FullExecutablePath))
+    if (!FPaths::FileExists(PythonPath))
     {
-        UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Executable not found at: %s, searching..."), *FullExecutablePath);
-        
-        // Try plugin directory search as fallback
-        if (const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("ComfyUI")))
-        {
-            FString PluginDir = Plugin->GetBaseDir();
-            TArray<FString> FoundFiles;
-            IFileManager::Get().FindFilesRecursive(FoundFiles, *PluginDir, *Executable, true, false);
-            if (FoundFiles.Num() > 0)
-            {
-                FullExecutablePath = FoundFiles[0];
-                WorkingDir = FPaths::GetPath(FullExecutablePath);
-                UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Found executable via recursive search: %s"), *FullExecutablePath);
-            }
-        }
-    }
-
-    // Final validation
-    if (!FPaths::FileExists(FullExecutablePath))
-    {
-        UE_LOG(LogTemp, Error, TEXT("ComfyUI: Could not find executable '%s'. Tried path: %s"), *Executable, *FullExecutablePath);
-        UE_LOG(LogTemp, Error, TEXT("ComfyUI: Please set the correct 'Portable Root Path' in Project Settings > Plugins > ComfyUI"));
+        UE_LOG(LogTemp, Error, TEXT("ComfyUI: python_embeded/python.exe not found at: %s"), *PythonPath);
         return false;
     }
 
-    UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Launching: %s (working dir: %s)"), *FullExecutablePath, *WorkingDir);
+    if (!FPaths::FileExists(ScriptPath))
+    {
+        UE_LOG(LogTemp, Error, TEXT("ComfyUI: ComfyUI/main.py not found at: %s"), *ScriptPath);
+        return false;
+    }
 
-    // Launch
+    FString Args = FString::Printf(TEXT("\"%s\" --gpu-only"), *ScriptPath.Replace(TEXT("/"), TEXT("\\")));
+
+    UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Launching python: %s"), *PythonPath);
+    UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Args: %s"), *Args);
+
+    FString ComfyUIDir = FPaths::Combine(WorkingDir, TEXT("ComfyUI"));
+
     PortableHandle = FPlatformProcess::CreateProc(
-        *FullExecutablePath,
-        *Settings->PortableArgs,
+        *PythonPath.Replace(TEXT("/"), TEXT("\\")),
+        *Args,
         true, false, false,
         nullptr, 0,
-        *WorkingDir,
+        *ComfyUIDir.Replace(TEXT("/"), TEXT("\\")),  // run from ComfyUI/ not portable root
         nullptr);
-
     if (PortableHandle.IsValid())
     {
-        UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Process launched successfully"));
+        UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Launched successfully"));
     }
     else
     {
-        UE_LOG(LogTemp, Error, TEXT("ComfyUI: Failed to create process"));
+        UE_LOG(LogTemp, Error, TEXT("ComfyUI: Failed to launch"));
     }
 
     return PortableHandle.IsValid();

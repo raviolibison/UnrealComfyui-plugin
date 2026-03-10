@@ -24,12 +24,8 @@
 #include "Selection.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Widgets/Input/SCheckBox.h"
-#include "Components/MeshComponent.h"
-#include "Components/StaticMeshComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "GameFramework/Actor.h"
-#include "Materials/Material.h"
-#include "Materials/MaterialInstanceDynamic.h"
 #include "Materials/MaterialInstanceConstant.h"
 #include "Kismet/GameplayStatics.h"
 #include "Misc/Paths.h"
@@ -40,38 +36,35 @@
 #include "Engine/StaticMeshActor.h"
 #include "Interfaces/IPluginManager.h"
 
-
 #define LOCTEXT_NAMESPACE "SComfyUIPanel"
+
+// ============================================================================
+// Construct
+// ============================================================================
 
 void SComfyUIPanel::Construct(const FArguments& InArgs)
 {
-    // Initialize width options
     WidthOptions.Add(MakeShared<FString>(TEXT("512")));
     WidthOptions.Add(MakeShared<FString>(TEXT("768")));
     WidthOptions.Add(MakeShared<FString>(TEXT("1024")));
     WidthOptions.Add(MakeShared<FString>(TEXT("1280")));
     WidthOptions.Add(MakeShared<FString>(TEXT("1920")));
     WidthOptions.Add(MakeShared<FString>(TEXT("Custom")));
-    SelectedWidth = WidthOptions[2]; // Default to 1024
-    
-    // Initialize height options
+    SelectedWidth = WidthOptions[2];
+
     HeightOptions.Add(MakeShared<FString>(TEXT("512")));
     HeightOptions.Add(MakeShared<FString>(TEXT("768")));
     HeightOptions.Add(MakeShared<FString>(TEXT("1024")));
     HeightOptions.Add(MakeShared<FString>(TEXT("720")));
     HeightOptions.Add(MakeShared<FString>(TEXT("1080")));
     HeightOptions.Add(MakeShared<FString>(TEXT("Custom")));
-    SelectedHeight = HeightOptions[2]; // Default to 1024
-    
-    StatusText = TEXT("Offline");
-    CurrentFilenamePrefix = TEXT("UE_Editor");
+    SelectedHeight = HeightOptions[2];
 
+    StatusText = TEXT("Offline");
     WeakThis = SharedThis(this);
 
     LoadBaseMaterial();
-    
-    // Initial State: Reset connection attempts so we do a single passive check
-    ConnectionAttempts = 0; 
+    ConnectionAttempts = 0;
     PollComfyConnection();
 
     ChildSlot
@@ -82,59 +75,57 @@ void SComfyUIPanel::Construct(const FArguments& InArgs)
         [
             SNew(SVerticalBox)
 
-            // --- HEADER: Server Control ---
+            // --- Server Control ---
             + SVerticalBox::Slot()
             .AutoHeight()
             .Padding(0, 0, 0, 15)
             [
                 SNew(SHorizontalBox)
-                
-                // Start Button
                 + SHorizontalBox::Slot()
                 .AutoWidth()
                 [
                     SNew(SButton)
-                    .Text_Lambda([this]() { 
-                        return bIsComfyReady ? LOCTEXT("ServerRunning", "ComfyUI Running") : LOCTEXT("StartServer", "Start ComfyUI"); 
+                    .Text_Lambda([this]() {
+                        return bIsComfyReady
+                            ? LOCTEXT("ServerRunning", "ComfyUI Running")
+                            : LOCTEXT("StartServer", "Start ComfyUI");
                     })
                     .OnClicked(this, &SComfyUIPanel::OnStartComfyClicked)
-                    .IsEnabled_Lambda([this](){ return !bIsComfyReady; }) // Disable if already running
+                    .IsEnabled_Lambda([this](){ return !bIsComfyReady; })
                 ]
-
-                // Status Dot
                 + SHorizontalBox::Slot()
                 .AutoWidth()
                 .Padding(10, 0, 0, 0)
                 .VAlign(VAlign_Center)
                 [
                     SNew(STextBlock)
-                    .Text(FText::FromString(TEXT("\u25CF"))) // Circle character
+                    .Text(FText::FromString(TEXT("\u25CF")))
                     .Font(FCoreStyle::GetDefaultFontStyle("Regular", 24))
                     .ColorAndOpacity_Lambda([this]() {
                         return bIsComfyReady ? FLinearColor::Green : FLinearColor::Red;
                     })
                     .ToolTipText_Lambda([this](){
-                         return bIsComfyReady ? LOCTEXT("OnlineTooltip", "Server is Online") : LOCTEXT("OfflineTooltip", "Server is Offline");
+                        return bIsComfyReady
+                            ? LOCTEXT("OnlineTooltip", "Server is Online")
+                            : LOCTEXT("OfflineTooltip", "Server is Offline");
                     })
                 ]
             ]
-            
+
             // Divider
             + SVerticalBox::Slot()
             .AutoHeight()
             .Padding(0, 5)
             [
-                SNew(SSpacer)
-                .Size(FVector2D(0, 10))
+                SNew(SSpacer).Size(FVector2D(0, 10))
             ]
 
-            // --- PROMPT SECTION ---
+            // --- Prompts ---
             + SVerticalBox::Slot()
             .AutoHeight()
             [
                 SNew(STextBlock).Text(LOCTEXT("PromptLabel", "Prompt:"))
             ]
-
             + SVerticalBox::Slot()
             .AutoHeight()
             .Padding(0, 5, 0, 10)
@@ -145,14 +136,11 @@ void SComfyUIPanel::Construct(const FArguments& InArgs)
                 .OnTextChanged(this, &SComfyUIPanel::OnPromptTextChanged)
                 .MinDesiredWidth(400)
             ]
-
-            // Negative Prompt
             + SVerticalBox::Slot()
             .AutoHeight()
             [
                 SNew(STextBlock).Text(LOCTEXT("NegPromptLabel", "Negative Prompt:"))
             ]
-
             + SVerticalBox::Slot()
             .AutoHeight()
             .Padding(0, 5, 0, 10)
@@ -163,7 +151,7 @@ void SComfyUIPanel::Construct(const FArguments& InArgs)
                 .OnTextChanged(this, &SComfyUIPanel::OnNegativePromptTextChanged)
             ]
 
-            // Width
+            // --- Resolution ---
             + SVerticalBox::Slot()
             .AutoHeight()
             .Padding(0, 5)
@@ -189,18 +177,14 @@ void SComfyUIPanel::Construct(const FArguments& InArgs)
                 + SHorizontalBox::Slot().Padding(10, 0, 0, 0).AutoWidth()
                 [
                     SNew(SNumericEntryBox<int32>)
-                    .Visibility_Lambda([this]() { 
-                        return (*SelectedWidth == TEXT("Custom")) ? EVisibility::Visible : EVisibility::Collapsed; 
+                    .Visibility_Lambda([this]() {
+                        return (*SelectedWidth == TEXT("Custom")) ? EVisibility::Visible : EVisibility::Collapsed;
                     })
                     .Value_Lambda([this]() { return TOptional<int32>(CustomWidth); })
                     .OnValueChanged(this, &SComfyUIPanel::OnCustomWidthChanged)
-                    .MinValue(64)
-                    .MaxValue(8192)
-                    .MinDesiredValueWidth(100)
+                    .MinValue(64).MaxValue(8192).MinDesiredValueWidth(100)
                 ]
             ]
-            
-            // Height
             + SVerticalBox::Slot()
             .AutoHeight()
             .Padding(0, 5)
@@ -226,45 +210,57 @@ void SComfyUIPanel::Construct(const FArguments& InArgs)
                 + SHorizontalBox::Slot().Padding(10, 0, 0, 0).AutoWidth()
                 [
                     SNew(SNumericEntryBox<int32>)
-                    .Visibility_Lambda([this]() { 
-                        return (*SelectedHeight == TEXT("Custom")) ? EVisibility::Visible : EVisibility::Collapsed; 
+                    .Visibility_Lambda([this]() {
+                        return (*SelectedHeight == TEXT("Custom")) ? EVisibility::Visible : EVisibility::Collapsed;
                     })
                     .Value_Lambda([this]() { return TOptional<int32>(CustomHeight); })
                     .OnValueChanged(this, &SComfyUIPanel::OnCustomHeightChanged)
-                    .MinValue(64)
-                    .MaxValue(8192)
-                    .MinDesiredValueWidth(100)
+                    .MinValue(64).MaxValue(8192).MinDesiredValueWidth(100)
                 ]
             ]
-            // --- NEW: AUTO-APPLY SECTION ---
+
+            // --- Img2Img Strength ---
+            + SVerticalBox::Slot()
+            .AutoHeight()
+            .Padding(0, 5)
+            [
+                SNew(SHorizontalBox)
+                + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
+                [
+                    SNew(STextBlock).Text(LOCTEXT("Img2ImgStrengthLabel", "Img2Img Strength: "))
+                ]
+                + SHorizontalBox::Slot().Padding(10, 0, 0, 0).AutoWidth()
+                [
+                    SNew(SNumericEntryBox<float>)
+                    .Value_Lambda([this]() { return TOptional<float>(Img2ImgStrength); })
+                    .OnValueChanged_Lambda([this](float NewValue) {
+                        Img2ImgStrength = FMath::Clamp(NewValue, 0.0f, 1.0f);
+                    })
+                    .MinValue(0.0f).MaxValue(1.0f)
+                    .MinSliderValue(0.0f).MaxSliderValue(1.0f)
+                    .AllowSpin(true)
+                    .MinDesiredValueWidth(60)
+                ]
+            ]
+
+            // --- Target Actors ---
             + SVerticalBox::Slot()
             .AutoHeight()
             .Padding(0, 20, 0, 10)
             [
                 SNew(SVerticalBox)
-                
-                // Target Actors List Header
-                + SVerticalBox::Slot()
-                .AutoHeight()
-                .Padding(0, 0, 0, 5)
+                + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 5)
                 [
                     SNew(STextBlock)
                     .Text(LOCTEXT("TargetActorsLabel", "Target Actors:"))
                     .Font(FCoreStyle::GetDefaultFontStyle("Bold", 10))
                 ]
-                
-                // Target actors display (locked-in list)
-                + SVerticalBox::Slot()
-                .AutoHeight()
-                .Padding(10, 5, 0, 5)
+                + SVerticalBox::Slot().AutoHeight().Padding(10, 5, 0, 5)
                 [
                     SNew(STextBlock)
                     .Text_Lambda([this]() {
                         if (TargetActors.Num() == 0)
-                        {
                             return FText::FromString(TEXT("(No actors added)"));
-                        }
-                        
                         FString ActorList;
                         int32 ValidCount = 0;
                         for (const TWeakObjectPtr<AActor>& WeakActor : TargetActors)
@@ -276,75 +272,45 @@ void SComfyUIPanel::Construct(const FArguments& InArgs)
                                 ValidCount++;
                             }
                         }
-                        
-                        if (ValidCount == 0)
-                        {
-                            return FText::FromString(TEXT("(No valid actors)"));
-                        }
-                        
-                        return FText::FromString(ActorList);
+                        return ValidCount == 0
+                            ? FText::FromString(TEXT("(No valid actors)"))
+                            : FText::FromString(ActorList);
                     })
                     .ColorAndOpacity_Lambda([this]() {
                         return TargetActors.Num() > 0 ? FLinearColor::White : FLinearColor(0.5f, 0.5f, 0.5f);
                     })
                 ]
-                
-                // Buttons: Add Selected & Clear All
-                + SVerticalBox::Slot()
-                .AutoHeight()
-                .Padding(0, 5, 0, 0)
+                + SVerticalBox::Slot().AutoHeight().Padding(0, 5, 0, 0)
                 [
                     SNew(SHorizontalBox)
-                    
-                    // Add Selected button
-                    + SHorizontalBox::Slot()
-                    .AutoWidth()
+                    + SHorizontalBox::Slot().AutoWidth()
                     [
                         SNew(SButton)
                         .Text(LOCTEXT("AddSelectedButton", "+ Add Selected"))
                         .OnClicked(this, &SComfyUIPanel::OnAddSelectedClicked)
-                        .IsEnabled_Lambda([this]() {
-                            return GetSelectedActors().Num() > 0;
-                        })
-                        .ToolTipText(LOCTEXT("AddSelectedTooltip", "Add currently selected actors to the target list"))
+                        .IsEnabled_Lambda([this]() { return GetSelectedActors().Num() > 0; })
                     ]
-                    
-                    // Clear All button
-                    + SHorizontalBox::Slot()
-                    .AutoWidth()
-                    .Padding(10, 0, 0, 0)
+                    + SHorizontalBox::Slot().AutoWidth().Padding(10, 0, 0, 0)
                     [
                         SNew(SButton)
                         .Text(LOCTEXT("ClearAllButton", "Clear All"))
                         .OnClicked(this, &SComfyUIPanel::OnClearAllClicked)
-                        .IsEnabled_Lambda([this]() {
-                            return TargetActors.Num() > 0;
-                        })
-                        .ToolTipText(LOCTEXT("ClearAllTooltip", "Remove all actors from the target list"))
+                        .IsEnabled_Lambda([this]() { return TargetActors.Num() > 0; })
                     ]
                 ]
-                
-                // Auto-apply checkbox
-                + SVerticalBox::Slot()
-                .AutoHeight()
-                .Padding(0, 10, 0, 0)
+                + SVerticalBox::Slot().AutoHeight().Padding(0, 10, 0, 0)
                 [
                     SNew(SHorizontalBox)
-                    + SHorizontalBox::Slot()
-                    .AutoWidth()
+                    + SHorizontalBox::Slot().AutoWidth()
                     [
                         SNew(SCheckBox)
-                        .IsChecked_Lambda([this]() { 
-                            return bAutoApplyEnabled ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; 
+                        .IsChecked_Lambda([this]() {
+                            return bAutoApplyEnabled ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
                         })
                         .OnCheckStateChanged(this, &SComfyUIPanel::OnAutoApplyCheckChanged)
-                        .IsEnabled_Lambda([this]() {
-                            return TargetActors.Num() > 0;
-                        })
+                        .IsEnabled_Lambda([this]() { return TargetActors.Num() > 0; })
                     ]
-                    + SHorizontalBox::Slot()
-                    .Padding(5, 0, 0, 0)
-                    .VAlign(VAlign_Center)
+                    + SHorizontalBox::Slot().Padding(5, 0, 0, 0).VAlign(VAlign_Center)
                     [
                         SNew(STextBlock)
                         .Text(LOCTEXT("AutoApplyLabel", "Auto-apply to target actors on generation"))
@@ -352,7 +318,7 @@ void SComfyUIPanel::Construct(const FArguments& InArgs)
                 ]
             ]
 
-            // --- GENERATE BUTTON ---
+            // --- Generate Button ---
             + SVerticalBox::Slot()
             .AutoHeight()
             .Padding(0, 20, 0, 10)
@@ -361,79 +327,58 @@ void SComfyUIPanel::Construct(const FArguments& InArgs)
                 .Text(LOCTEXT("GenerateButton", "Generate Image"))
                 .OnClicked(this, &SComfyUIPanel::OnGenerateClicked)
                 .HAlign(HAlign_Center)
-                .IsEnabled_Lambda([this]() { return bIsComfyReady; }) // <--- LOCKED UNTIL CONNECTED
+                .IsEnabled_Lambda([this]() { return bIsComfyReady; })
             ]
 
-            // --- ACTION BUTTONS ---
+            // --- Action Buttons ---
             + SVerticalBox::Slot()
             .AutoHeight()
             .Padding(0, 10, 0, 10)
             [
                 SNew(SHorizontalBox)
-                
-                // Apply to Actors button
-                + SHorizontalBox::Slot()
-                .AutoWidth()
+                + SHorizontalBox::Slot().AutoWidth()
                 [
                     SNew(SButton)
                     .Text(LOCTEXT("ApplyToActorsButton", "Apply to Actors"))
                     .OnClicked(this, &SComfyUIPanel::OnApplyToActorsClicked)
-                    .IsEnabled_Lambda([this]() { 
-                        return !CurrentPreviewImagePath.IsEmpty() && TargetActors.Num() > 0; 
+                    .IsEnabled_Lambda([this]() {
+                        return !CurrentPreviewImagePath.IsEmpty() && TargetActors.Num() > 0;
                     })
-                    .ToolTipText(LOCTEXT("ApplyToActorsTooltip", "Apply texture to target actors (temporary)"))
                 ]
-                
-                // Apply to Composure button - NEW!
-                + SHorizontalBox::Slot()
-                .AutoWidth()
-                .Padding(10, 0, 0, 0)
+                + SHorizontalBox::Slot().AutoWidth().Padding(10, 0, 0, 0)
                 [
                     SNew(SButton)
                     .Text(LOCTEXT("ApplyToComposureButton", "Apply to Composure"))
                     .OnClicked(this, &SComfyUIPanel::OnApplyToComposureClicked)
-                    .IsEnabled_Lambda([this]() { 
-                        return !CurrentPreviewImagePath.IsEmpty(); 
-                    })
-                    .ToolTipText(LOCTEXT("ApplyToComposureTooltip", "Apply texture to Composure plate layers"))
+                    .IsEnabled_Lambda([this]() { return !CurrentPreviewImagePath.IsEmpty(); })
                 ]
-
-                // Generate 360 button - NEW!
-                + SHorizontalBox::Slot()
-                .AutoWidth()
-                .Padding(10, 0, 0, 0)
+                + SHorizontalBox::Slot().AutoWidth().Padding(10, 0, 0, 0)
+                [
+                    SNew(SButton)
+                    .Text(LOCTEXT("Img2ImgButton", "Img2Img"))
+                    .OnClicked(this, &SComfyUIPanel::OnImg2ImgClicked)
+                    .IsEnabled_Lambda([this]() {
+                        return !CurrentPreviewImagePath.IsEmpty() && bIsComfyReady;
+                    })
+                    .ToolTipText(LOCTEXT("Img2ImgTooltip", "Run img2img on the current preview image"))
+                ]
+                + SHorizontalBox::Slot().AutoWidth().Padding(10, 0, 0, 0)
                 [
                     SNew(SButton)
                     .Text(LOCTEXT("Generate360Button", "Generate 360° HDRI"))
                     .OnClicked(this, &SComfyUIPanel::OnGenerate360Clicked)
-                    .IsEnabled_Lambda([this]() { 
-                        return !CurrentPreviewImagePath.IsEmpty(); 
-                    })
-                    .ToolTipText(LOCTEXT("Generate360Tooltip", "Generate 360° panorama for scene lighting"))
-]
-                
-                // Save to Project button
-                + SHorizontalBox::Slot()
-                .AutoWidth()
-                .Padding(10, 0, 0, 0)
+                    .IsEnabled_Lambda([this]() { return !CurrentPreviewImagePath.IsEmpty(); })
+                ]
+                + SHorizontalBox::Slot().AutoWidth().Padding(10, 0, 0, 0)
                 [
                     SNew(SButton)
                     .Text(LOCTEXT("SaveToProjectButton", "Save to Project"))
                     .OnClicked(this, &SComfyUIPanel::OnImportClicked)
-                    .IsEnabled_Lambda([this]() { 
-                        return !CurrentPreviewImagePath.IsEmpty(); 
-                    })
-                    .ToolTipText_Lambda([this]() {
-                        if (TargetActors.Num() > 0)
-                        {
-                            return LOCTEXT("SaveWithMaterialsTooltip", "Save texture and materials (permanent)");
-                        }
-                        return LOCTEXT("SaveTextureOnlyTooltip", "Save texture to project");
-                    })
+                    .IsEnabled_Lambda([this]() { return !CurrentPreviewImagePath.IsEmpty(); })
                 ]
             ]
 
-            // Status Bar
+            // --- Status ---
             + SVerticalBox::Slot()
             .AutoHeight()
             .Padding(0, 5)
@@ -442,14 +387,16 @@ void SComfyUIPanel::Construct(const FArguments& InArgs)
                 .Text_Lambda([this]() { return FText::FromString(StatusText); })
                 .Justification(ETextJustify::Center)
                 .ColorAndOpacity_Lambda([this]() {
-                    // Simple color logic
-                    if (StatusText.Contains("Error") || StatusText.Contains("Offline")) return FLinearColor::Red;
-                    if (StatusText.Contains("Generating") || StatusText.Contains("Waiting") || StatusText.Contains("Launching")) return FLinearColor::Yellow;
+                    if (StatusText.Contains("Error") || StatusText.Contains("Offline"))
+                        return FLinearColor::Red;
+                    if (StatusText.Contains("Generating") || StatusText.Contains("Waiting")
+                        || StatusText.Contains("Launching") || StatusText.Contains("Running"))
+                        return FLinearColor::Yellow;
                     return FLinearColor::White;
                 })
             ]
 
-            // Preview
+            // --- Preview ---
             + SVerticalBox::Slot()
             .FillHeight(1.0f)
             .Padding(0, 10)
@@ -457,37 +404,25 @@ void SComfyUIPanel::Construct(const FArguments& InArgs)
             .VAlign(VAlign_Center)
             [
                 SNew(SBox)
-                .WidthOverride_Lambda([this]() -> FOptionalSize
-                {
+                .WidthOverride_Lambda([this]() -> FOptionalSize {
                     if (ImageBrush.IsValid() && ImageBrush->GetResourceObject())
                     {
                         const FVector2D ImageSize = ImageBrush->ImageSize;
                         if (ImageSize.X > 0 && ImageSize.Y > 0)
                         {
-                            const float MaxWidth = 800.0f;
-                            const float MaxHeight = 600.0f;
-                            
-                            float Scale = FMath::Min(MaxWidth / ImageSize.X, MaxHeight / ImageSize.Y);
-                            Scale = FMath::Min(Scale, 1.0f);
-                            
+                            float Scale = FMath::Min(FMath::Min(800.0f / ImageSize.X, 600.0f / ImageSize.Y), 1.0f);
                             return FOptionalSize(ImageSize.X * Scale);
                         }
                     }
                     return FOptionalSize();
                 })
-                .HeightOverride_Lambda([this]() -> FOptionalSize
-                {
+                .HeightOverride_Lambda([this]() -> FOptionalSize {
                     if (ImageBrush.IsValid() && ImageBrush->GetResourceObject())
                     {
                         const FVector2D ImageSize = ImageBrush->ImageSize;
                         if (ImageSize.X > 0 && ImageSize.Y > 0)
                         {
-                            const float MaxWidth = 800.0f;
-                            const float MaxHeight = 600.0f;
-                            
-                            float Scale = FMath::Min(MaxWidth / ImageSize.X, MaxHeight / ImageSize.Y);
-                            Scale = FMath::Min(Scale, 1.0f);
-                            
+                            float Scale = FMath::Min(FMath::Min(800.0f / ImageSize.X, 600.0f / ImageSize.Y), 1.0f);
                             return FOptionalSize(ImageSize.Y * Scale);
                         }
                     }
@@ -497,37 +432,395 @@ void SComfyUIPanel::Construct(const FArguments& InArgs)
                     SAssignNew(PreviewImage, SImage)
                 ]
             ]
-            
-            
         ]
     ];
 }
 
 // ============================================================================
-// UI Callbacks
+// Generic Workflow System
 // ============================================================================
 
-void SComfyUIPanel::OnPromptTextChanged(const FText& NewText)
+void SComfyUIPanel::SubmitWorkflow(const FComfyWorkflowParams& Params)
 {
-    PromptText = NewText.ToString();
+    // Parse the workflow JSON into an object
+    TSharedPtr<FJsonObject> PromptObject;
+    const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Params.WorkflowJson);
+    if (!FJsonSerializer::Deserialize(Reader, PromptObject) || !PromptObject.IsValid())
+    {
+        UpdateStatus(TEXT("Error: Invalid workflow JSON"));
+        return;
+    }
+
+    // Wrap it in { "prompt": { ... } }
+    TSharedPtr<FJsonObject> Wrapper = MakeShared<FJsonObject>();
+    Wrapper->SetObjectField(TEXT("prompt"), PromptObject);
+
+    FString RequestBody;
+    const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&RequestBody);
+    FJsonSerializer::Serialize(Wrapper.ToSharedRef(), Writer);
+
+    // Grab base URL
+    const UComfyUISettings* Settings = GetDefault<UComfyUISettings>();
+    FString BaseUrl = Settings ? Settings->BaseUrl : TEXT("http://127.0.0.1:8188");
+
+    // POST to /prompt
+    TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
+    Request->SetURL(BaseUrl + TEXT("/prompt"));
+    Request->SetVerb(TEXT("POST"));
+    Request->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
+    Request->SetContentAsString(RequestBody);
+
+    // Capture everything the completion handler will need
+    FComfyWorkflowParams CapturedParams = Params;
+    TWeakPtr<SComfyUIPanel> CapturedWeakThis = WeakThis;
+
+    Request->OnProcessRequestComplete().BindLambda(
+        [CapturedParams, CapturedWeakThis, BaseUrl](FHttpRequestPtr, FHttpResponsePtr Response, bool bSucceeded)
+        {
+            TSharedPtr<SComfyUIPanel> Panel = CapturedWeakThis.Pin();
+            if (!Panel.IsValid()) return;
+
+            if (!bSucceeded || !Response.IsValid() || !EHttpResponseCodes::IsOk(Response->GetResponseCode()))
+            {
+                Panel->UpdateStatus(TEXT("Error: Failed to submit workflow"));
+                return;
+            }
+
+            // Extract prompt_id
+            TSharedPtr<FJsonObject> JsonResponse;
+            const TSharedRef<TJsonReader<>> JsonReader = TJsonReaderFactory<>::Create(Response->GetContentAsString());
+            if (!FJsonSerializer::Deserialize(JsonReader, JsonResponse) || !JsonResponse.IsValid())
+            {
+                Panel->UpdateStatus(TEXT("Error: Could not parse prompt_id"));
+                return;
+            }
+
+            FString PromptId = JsonResponse->GetStringField(TEXT("prompt_id"));
+            Panel->CurrentPromptId = PromptId;
+            Panel->UpdateStatus(CapturedParams.RunningStatus);
+
+            UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Submitted workflow, prompt_id: %s"), *PromptId);
+
+            // Register WebSocket watcher — bind to the single OnWorkflowComplete,
+            // carrying CapturedParams so it knows what to do when done
+            if (FComfyUIModule* Module = FModuleManager::GetModulePtr<FComfyUIModule>(TEXT("ComfyUI")))
+            {
+                TSharedPtr<FComfyUIWebSocketHandler> WSHandler = Module->GetWebSocketHandler();
+                if (WSHandler.IsValid())
+                {
+                    if (!WSHandler->IsConnected())
+                    {
+                        FString WsUrl = BaseUrl
+                            .Replace(TEXT("http://"), TEXT("ws://"))
+                            .Replace(TEXT("https://"), TEXT("wss://"))
+                            + TEXT("/ws");
+                        WSHandler->Connect(WsUrl);
+                    }
+
+                    FComfyUIWorkflowCompleteDelegateNative CompleteDelegate;
+                    CompleteDelegate.BindLambda(
+                        [CapturedWeakThis, CapturedParams](bool bSuccess, const FString& InPromptId)
+                        {
+                            TSharedPtr<SComfyUIPanel> InnerPanel = CapturedWeakThis.Pin();
+                            if (InnerPanel.IsValid())
+                            {
+                                InnerPanel->OnWorkflowComplete(bSuccess, InPromptId, CapturedParams);
+                            }
+                        });
+
+                    WSHandler->WatchPrompt(PromptId, CompleteDelegate);
+                }
+            }
+        });
+
+    Request->ProcessRequest();
 }
 
-void SComfyUIPanel::OnNegativePromptTextChanged(const FText& NewText)
+void SComfyUIPanel::OnWorkflowComplete(bool bSuccess, const FString& PromptId, FComfyWorkflowParams Params)
 {
-    NegativePromptText = NewText.ToString();
+    UE_LOG(LogTemp, Warning, TEXT("ComfyUI: OnWorkflowComplete - Success: %d, PromptId: %s, Prefix: %s"),
+        bSuccess, *PromptId, *Params.OutputPrefix);
+
+    if (!bSuccess)
+    {
+        UpdateStatus(TEXT("Error: Workflow failed"));
+        return;
+    }
+
+    UpdateStatus(TEXT("Loading output image..."));
+
+    TWeakPtr<SComfyUIPanel> CapturedWeakThis = WeakThis;
+
+    // Small delay to let ComfyUI finish writing the file
+    if (GEditor)
+    {
+        FTimerHandle DelayTimer;
+        GEditor->GetTimerManager()->SetTimer(
+            DelayTimer,
+            [CapturedWeakThis, Params]()
+            {
+                TSharedPtr<SComfyUIPanel> Panel = CapturedWeakThis.Pin();
+                if (!Panel.IsValid()) return;
+
+                // Find the output image
+                FString ImagePath = UComfyUIBlueprintLibrary::GetLatestOutputImage(Params.OutputPrefix);
+                if (ImagePath.IsEmpty())
+                {
+                    Panel->UpdateStatus(FString::Printf(
+                        TEXT("Error: No output image found with prefix '%s'"), *Params.OutputPrefix));
+                    return;
+                }
+
+                UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Found output image: %s"), *ImagePath);
+
+                // Optionally update preview
+                if (Params.bUpdatePreview)
+                {
+                    Panel->CurrentPreviewImagePath = ImagePath;
+                    Panel->LoadAndDisplayImage(ImagePath);
+                }
+
+                // Optionally auto-apply to actors
+                if (Params.bAutoApply && Panel->TargetActors.Num() > 0)
+                {
+                    UTexture2D* Texture = UComfyUIBlueprintLibrary::LoadImageFromFile(ImagePath);
+                    if (Texture)
+                    {
+                        Panel->ApplyMaterialToTargetActors(Texture);
+                    }
+                }
+
+                // Special post-processing for 360 output
+                // We detect this by prefix — keeps the struct simple without needing an enum
+                if (Params.OutputPrefix == TEXT("Kontext_Upscale"))
+                {
+                    UTexture2D* Texture360 = UComfyUIBlueprintLibrary::ImportImageAsAsset(
+                        ImagePath,
+                        UComfyUIBlueprintLibrary::GenerateUniqueAssetName(
+                            TEXT("/Game/GeneratedTextures"),
+                            FString::Printf(TEXT("T_360_HDRI_%s"),
+                                *FDateTime::Now().ToString(TEXT("%Y%m%d_%H%M%S")))
+                        )
+                    );
+
+                    if (Texture360)
+                    {
+                        Texture360->SetForceMipLevelsToBeResident(30.0f);
+                        Texture360->WaitForStreaming();
+                        Texture360->SRGB = true;
+                        Texture360->UpdateResource();
+                        FlushRenderingCommands();
+                        Panel->Apply360ToSkyLight(Texture360);
+                    }
+                    else
+                    {
+                        Panel->UpdateStatus(TEXT("Error: Failed to import 360° texture"));
+                    }
+                    return;
+                }
+
+                Panel->UpdateStatus(Params.CompleteStatus);
+            },
+            0.5f,
+            false
+        );
+    }
 }
 
+// ============================================================================
+// Workflow Builders
+// Each one builds an FComfyWorkflowParams and calls SubmitWorkflow.
+// ============================================================================
+
+void SComfyUIPanel::StartGeneration()
+{
+    int32 Width  = (*SelectedWidth  == TEXT("Custom")) ? CustomWidth  : FCString::Atoi(**SelectedWidth);
+    int32 Height = (*SelectedHeight == TEXT("Custom")) ? CustomHeight : FCString::Atoi(**SelectedHeight);
+
+    FComfyUIFlux2WorkflowParams FluxParams;
+    FluxParams.PositivePrompt = PromptText;
+    FluxParams.NegativePrompt = NegativePromptText;
+    FluxParams.Width          = Width;
+    FluxParams.Height         = Height;
+    FluxParams.FilenamePrefix = CurrentFilenamePrefix;
+    FluxParams.Seed           = FMath::Abs((int32)(FDateTime::Now().GetTicks() % MAX_int32));
+
+    UE_LOG(LogTemp, Warning, TEXT("ComfyUI: StartGeneration seed: %d"), FluxParams.Seed);
+
+    FComfyWorkflowParams WorkflowParams;
+    WorkflowParams.WorkflowJson    = UComfyUIBlueprintLibrary::BuildFlux2WorkflowJson(FluxParams);
+    WorkflowParams.OutputPrefix    = CurrentFilenamePrefix;
+    WorkflowParams.RunningStatus   = TEXT("Generating image...");
+    WorkflowParams.CompleteStatus  = TEXT("Preview ready! Save to project or run Img2Img.");
+    WorkflowParams.bUpdatePreview  = true;
+    WorkflowParams.bAutoApply      = bAutoApplyEnabled;
+
+    SubmitWorkflow(WorkflowParams);
+}
+
+void SComfyUIPanel::StartImg2Img()
+{
+    FString Filename = FPaths::GetCleanFilename(CurrentPreviewImagePath);
+    FString OutputReference = Filename + TEXT(" [output]");
+
+    TSharedPtr<FJsonObject> WorkflowObj;
+    if (!LoadWorkflowFromFile(TEXT("workflows/img2img-API.json"), WorkflowObj))
+    {
+        UpdateStatus(TEXT("Error: img2img workflow file not found"));
+        return;
+    }
+
+    // --- Patch your workflow node IDs here ---
+    // Replace "YOUR_LOAD_IMAGE_NODE_ID" with the actual node ID from your API export.
+
+    if (TSharedPtr<FJsonObject> ImageNode = WorkflowObj->GetObjectField(TEXT("YOUR_LOAD_IMAGE_NODE_ID")))
+    {
+        ImageNode->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("image"), OutputReference);
+    }
+
+    if (TSharedPtr<FJsonObject> PromptNode = WorkflowObj->GetObjectField(TEXT("YOUR_CLIP_TEXT_NODE_ID")))
+    {
+        PromptNode->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("text"), PromptText);
+    }
+
+    if (TSharedPtr<FJsonObject> SamplerNode = WorkflowObj->GetObjectField(TEXT("YOUR_KSAMPLER_NODE_ID")))
+    {
+        SamplerNode->GetObjectField(TEXT("inputs"))->SetNumberField(TEXT("denoise"), Img2ImgStrength);
+        SamplerNode->GetObjectField(TEXT("inputs"))->SetNumberField(
+            TEXT("noise_seed"), FMath::Abs((int32)(FDateTime::Now().GetTicks() % MAX_int32)));
+    }
+    // --- End patch ---
+
+    FComfyWorkflowParams WorkflowParams;
+    WorkflowParams.WorkflowJson   = SerializeWorkflow(WorkflowObj);
+    WorkflowParams.OutputPrefix   = TEXT("UE_Img2Img");
+    WorkflowParams.RunningStatus  = TEXT("Running img2img...");
+    WorkflowParams.CompleteStatus = TEXT("Img2Img complete! Save to project or run again.");
+    WorkflowParams.bUpdatePreview = true;
+    WorkflowParams.bAutoApply     = bAutoApplyEnabled;
+
+    SubmitWorkflow(WorkflowParams);
+}
+
+void SComfyUIPanel::Start360Generation()
+{
+    FString Filename = FPaths::GetCleanFilename(CurrentPreviewImagePath);
+    FString OutputReference = Filename + TEXT(" [output]");
+
+    TSharedPtr<FJsonObject> WorkflowObj;
+    if (!LoadWorkflowFromFile(TEXT("workflows/360_Kontext-Small-API.json"), WorkflowObj))
+    {
+        UpdateStatus(TEXT("Error: 360 workflow file not found"));
+        return;
+    }
+
+    // Patch image input nodes
+    if (TSharedPtr<FJsonObject> Node147 = WorkflowObj->GetObjectField(TEXT("147")))
+        Node147->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("image"), OutputReference);
+
+    if (TSharedPtr<FJsonObject> Node142 = WorkflowObj->GetObjectField(TEXT("142")))
+        Node142->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("image"), OutputReference);
+
+    FComfyWorkflowParams WorkflowParams;
+    WorkflowParams.WorkflowJson   = SerializeWorkflow(WorkflowObj);
+    WorkflowParams.OutputPrefix   = TEXT("Kontext_Upscale");
+    WorkflowParams.RunningStatus  = TEXT("Generating 360° panorama...");
+    WorkflowParams.CompleteStatus = TEXT("360° applied to scene lighting!");
+    WorkflowParams.bUpdatePreview = false; // 360 doesn't replace the 2D preview
+    WorkflowParams.bAutoApply     = false;
+
+    SubmitWorkflow(WorkflowParams);
+}
+
+// ============================================================================
+// UI Callbacks — just delegate to builders
+// ============================================================================
+
+FReply SComfyUIPanel::OnGenerateClicked()
+{
+    UpdateStatus(TEXT("Submitting workflow..."));
+    StartGeneration();
+    return FReply::Handled();
+}
+
+FReply SComfyUIPanel::OnImg2ImgClicked()
+{
+    if (CurrentPreviewImagePath.IsEmpty())
+    {
+        UpdateStatus(TEXT("Error: No preview image to use as input"));
+        return FReply::Handled();
+    }
+    UpdateStatus(TEXT("Submitting img2img workflow..."));
+    StartImg2Img();
+    return FReply::Handled();
+}
+
+FReply SComfyUIPanel::OnGenerate360Clicked()
+{
+    if (CurrentPreviewImagePath.IsEmpty())
+    {
+        UpdateStatus(TEXT("Error: No preview image available"));
+        return FReply::Handled();
+    }
+    UpdateStatus(TEXT("Submitting 360° workflow..."));
+    Start360Generation();
+    return FReply::Handled();
+}
+
+// ============================================================================
+// Helpers
+// ============================================================================
+
+bool SComfyUIPanel::LoadWorkflowFromFile(const FString& RelativePath, TSharedPtr<FJsonObject>& OutWorkflow)
+{
+    FString WorkflowPath;
+    if (const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("ComfyUI")))
+    {
+        WorkflowPath = FPaths::Combine(Plugin->GetBaseDir(), RelativePath);
+    }
+
+    if (!FPaths::FileExists(WorkflowPath))
+    {
+        UE_LOG(LogTemp, Error, TEXT("ComfyUI: Workflow not found at: %s"), *WorkflowPath);
+        return false;
+    }
+
+    FString WorkflowJson;
+    if (!FFileHelper::LoadFileToString(WorkflowJson, *WorkflowPath))
+    {
+        UE_LOG(LogTemp, Error, TEXT("ComfyUI: Failed to read workflow: %s"), *WorkflowPath);
+        return false;
+    }
+
+    const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(WorkflowJson);
+    if (!FJsonSerializer::Deserialize(Reader, OutWorkflow) || !OutWorkflow.IsValid())
+    {
+        UE_LOG(LogTemp, Error, TEXT("ComfyUI: Failed to parse workflow: %s"), *WorkflowPath);
+        return false;
+    }
+
+    return true;
+}
+
+FString SComfyUIPanel::SerializeWorkflow(const TSharedPtr<FJsonObject>& WorkflowObj)
+{
+    FString OutputString;
+    const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&OutputString);
+    FJsonSerializer::Serialize(WorkflowObj.ToSharedRef(), Writer);
+    return OutputString;
+}
+
+// ============================================================================
+// Server Control
+// ============================================================================
 
 FReply SComfyUIPanel::OnStartComfyClicked()
 {
-    // 1. Launch the process
     if (FComfyUIModule* Module = FModuleManager::GetModulePtr<FComfyUIModule>(TEXT("ComfyUI")))
     {
         if (Module->ForceStartPortable())
         {
             UpdateStatus(TEXT("Launching ComfyUI..."));
-            
-            // 2. Start polling. We set attempts to 1 to signal "User triggered this", so we want to loop/retry.
             ConnectionAttempts = 1;
             PollComfyConnection();
         }
@@ -541,182 +834,55 @@ FReply SComfyUIPanel::OnStartComfyClicked()
 
 void SComfyUIPanel::PollComfyConnection()
 {
-    // Simply ping the server to check status
     TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
     const UComfyUISettings* Settings = GetDefault<UComfyUISettings>();
     FString BaseUrl = Settings ? Settings->BaseUrl : TEXT("http://127.0.0.1:8188");
-    
+
     Request->SetURL(BaseUrl + TEXT("/system_stats"));
     Request->SetVerb(TEXT("GET"));
-    Request->SetTimeout(3.0f); // Fast timeout
+    Request->SetTimeout(3.0f);
 
     Request->OnProcessRequestComplete().BindLambda(
         [this](FHttpRequestPtr, FHttpResponsePtr Response, bool bSucceeded)
-    {
-        if (bSucceeded && Response.IsValid() && EHttpResponseCodes::IsOk(Response->GetResponseCode()))
         {
-            // SUCCESS: Connected
-            bIsComfyReady = true;
-            UpdateStatus(TEXT("Connected: ComfyUI is Ready"));
-            return;
-        }
-
-        // FAILED: Not ready yet
-        bIsComfyReady = false;
-
-        // RETRY LOGIC:
-        // If ConnectionAttempts > 0, it means the User clicked "Start", so we actively retry.
-        // If ConnectionAttempts == 0, it was just the passive check on window open, so we don't loop.
-        if (ConnectionAttempts > 0 && ConnectionAttempts < 30) 
-        {
-            ConnectionAttempts++;
-            UpdateStatus(FString::Printf(TEXT("Waiting for ComfyUI... (%ds)"), ConnectionAttempts));
-            
-            if (GEditor)
+            if (bSucceeded && Response.IsValid() && EHttpResponseCodes::IsOk(Response->GetResponseCode()))
             {
-                GEditor->GetTimerManager()->SetTimer(
-                    ConnectionTimerHandle,
-                    FTimerDelegate::CreateRaw(this, &SComfyUIPanel::PollComfyConnection),
-                    1.0f, 
-                    false
-                );
+                bIsComfyReady = true;
+                UpdateStatus(TEXT("Connected: ComfyUI is Ready"));
+                return;
             }
-        }
-        else if (ConnectionAttempts >= 30)
-        {
-             UpdateStatus(TEXT("Error: Timed out connecting to ComfyUI"));
-             ConnectionAttempts = 0; // Reset
-        }
-        else 
-        {
-             // Just a passive check failed (Window opened, server wasn't running)
-             StatusText = TEXT("Server Offline");
-        }
-    });
+
+            bIsComfyReady = false;
+
+            if (ConnectionAttempts > 0 && ConnectionAttempts < 30)
+            {
+                ConnectionAttempts++;
+                UpdateStatus(FString::Printf(TEXT("Waiting for ComfyUI... (%ds)"), ConnectionAttempts));
+                if (GEditor)
+                {
+                    GEditor->GetTimerManager()->SetTimer(
+                        ConnectionTimerHandle,
+                        FTimerDelegate::CreateRaw(this, &SComfyUIPanel::PollComfyConnection),
+                        1.0f, false);
+                }
+            }
+            else if (ConnectionAttempts >= 30)
+            {
+                UpdateStatus(TEXT("Error: Timed out connecting to ComfyUI"));
+                ConnectionAttempts = 0;
+            }
+            else
+            {
+                StatusText = TEXT("Server Offline");
+            }
+        });
 
     Request->ProcessRequest();
 }
 
-FReply SComfyUIPanel::OnGenerateClicked()
-{
-    StartGeneration();
-    return FReply::Handled();
-}
-
-void SComfyUIPanel::StartGeneration()
-{
-    UpdateStatus(TEXT("Submitting workflow..."));
-
-    const UComfyUISettings* Settings = GetDefault<UComfyUISettings>();
-    FString BaseUrl = Settings ? Settings->BaseUrl : TEXT("http://127.0.0.1:8188");
-
-    
-    // Get width and height from dropdowns/custom inputs
-    int32 Width = (*SelectedWidth == TEXT("Custom")) ? CustomWidth : FCString::Atoi(**SelectedWidth);
-    int32 Height = (*SelectedHeight == TEXT("Custom")) ? CustomHeight : FCString::Atoi(**SelectedHeight);
-
-    FComfyUIFlux2WorkflowParams Params;
-    Params.PositivePrompt = PromptText;
-    Params.NegativePrompt = NegativePromptText;
-    Params.Width = Width;
-    Params.Height = Height;
-    Params.FilenamePrefix = CurrentFilenamePrefix;
-
-    int32 UniqueSeed = FMath::Abs(FDateTime::Now().GetTicks() % MAX_int32);
-    Params.Seed = UniqueSeed;
-
-    UE_LOG(LogTemp, Warning, TEXT("ComfyUI Panel: Set Params.Seed to: %d"), Params.Seed);
-
-    // Build the JSON
-    FString WorkflowJson = UComfyUIBlueprintLibrary::BuildFlux2WorkflowJson(Params);
-
-    TSharedPtr<FJsonObject> PromptObject;
-    const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(WorkflowJson);
-    FJsonSerializer::Deserialize(Reader, PromptObject);
-
-    TSharedPtr<FJsonObject> Wrapper = MakeShared<FJsonObject>();
-    Wrapper->SetObjectField(TEXT("prompt"), PromptObject);
-
-    FString RequestBody;
-    const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&RequestBody);
-    FJsonSerializer::Serialize(Wrapper.ToSharedRef(), Writer);
-
-    TSharedRef<IHttpRequest, ESPMode::ThreadSafe> SubmitRequest = FHttpModule::Get().CreateRequest();
-    SubmitRequest->SetURL(BaseUrl + TEXT("/prompt"));
-    SubmitRequest->SetVerb(TEXT("POST"));
-    SubmitRequest->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
-    SubmitRequest->SetContentAsString(RequestBody);
-
-    // Capture BaseUrl in the lambda
-    SubmitRequest->OnProcessRequestComplete().BindLambda(
-        [this, BaseUrl](FHttpRequestPtr, FHttpResponsePtr SubmitResponse, bool bSubmitSucceeded)
-    {
-        if (!bSubmitSucceeded || !SubmitResponse.IsValid() || !EHttpResponseCodes::IsOk(SubmitResponse->GetResponseCode()))
-        {
-            UpdateStatus(TEXT("Error: Failed to submit workflow"));
-            UE_LOG(LogTemp, Error, TEXT("ComfyUI Panel: Workflow submission failed"));
-            return;
-        }
-
-        // Extract Prompt ID
-        TSharedPtr<FJsonObject> JsonResponse;
-        const TSharedRef<TJsonReader<>> JsonReader = TJsonReaderFactory<>::Create(SubmitResponse->GetContentAsString());
-        if (FJsonSerializer::Deserialize(JsonReader, JsonResponse) && JsonResponse.IsValid())
-        {
-            CurrentPromptId = JsonResponse->GetStringField(TEXT("prompt_id"));
-            UE_LOG(LogTemp, Warning, TEXT("ComfyUI Panel: Submitted workflow with prompt_id: %s"), *CurrentPromptId);
-        }
-        else
-        {
-            UpdateStatus(TEXT("Error: Failed to parse prompt_id"));
-            UE_LOG(LogTemp, Error, TEXT("ComfyUI Panel: Could not parse prompt_id from response"));
-            return;
-        }
-
-        UpdateStatus(TEXT("Generating image..."));
-
-        // Bind WebSocket listener
-        FComfyUIWorkflowCompleteDelegateNative CompleteDelegate;
-        CompleteDelegate.BindSP(SharedThis(this), &SComfyUIPanel::OnGenerationComplete);
-
-        if (FComfyUIModule* Module = FModuleManager::GetModulePtr<FComfyUIModule>(TEXT("ComfyUI")))
-        {
-            TSharedPtr<FComfyUIWebSocketHandler> WSHandler = Module->GetWebSocketHandler();
-            if (WSHandler.IsValid())
-            {
-                if (WSHandler->IsConnected())
-                {
-                    UE_LOG(LogTemp, Warning, TEXT("ComfyUI Panel: WebSocket is connected, watching prompt %s"), *CurrentPromptId);
-                    WSHandler->WatchPrompt(CurrentPromptId, CompleteDelegate);
-                }
-                else
-                {
-                    UE_LOG(LogTemp, Warning, TEXT("ComfyUI Panel: WebSocket NOT connected, attempting to connect..."));
-                    
-                    // Try to connect WebSocket
-                    FString WsUrl = BaseUrl.Replace(TEXT("http://"), TEXT("ws://")).Replace(TEXT("https://"), TEXT("wss://"));
-                    WsUrl += TEXT("/ws");
-                    WSHandler->Connect(WsUrl);
-                    
-                    // Register watcher anyway - it should work once connected
-                    WSHandler->WatchPrompt(CurrentPromptId, CompleteDelegate);
-                }
-            }
-            else
-            {
-                UE_LOG(LogTemp, Error, TEXT("ComfyUI Panel: WebSocket handler is INVALID"));
-                UpdateStatus(TEXT("Error: WebSocket unavailable"));
-            }
-        }
-        else
-        {
-            UE_LOG(LogTemp, Error, TEXT("ComfyUI Panel: Could not get ComfyUI module"));
-            UpdateStatus(TEXT("Error: Module unavailable"));
-        }
-    });
-
-    SubmitRequest->ProcessRequest();
-}
+// ============================================================================
+// Import / Apply
+// ============================================================================
 
 FReply SComfyUIPanel::OnImportClicked()
 {
@@ -725,268 +891,106 @@ FReply SComfyUIPanel::OnImportClicked()
         UpdateStatus(TEXT("Error: No preview image available"));
         return FReply::Handled();
     }
-    
-    
-    // Import texture as permanent asset
+
     FDateTime Now = FDateTime::Now();
     FString TextureName = FString::Printf(TEXT("T_Generated_%s"), *Now.ToString(TEXT("%Y%m%d_%H%M%S")));
     FString TextureAssetPath = UComfyUIBlueprintLibrary::GenerateUniqueAssetName(TEXT("/Game/GeneratedTextures"), TextureName);
-    
+
     UTexture2D* PermanentTexture = UComfyUIBlueprintLibrary::ImportImageAsAsset(CurrentPreviewImagePath, TextureAssetPath);
     if (!PermanentTexture)
     {
         UpdateStatus(TEXT("Error: Failed to create texture asset"));
         return FReply::Handled();
     }
-    
-    UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Created permanent texture: %s"), *TextureAssetPath);
-    
-    // If we have target actors, also create materials
+
     if (TargetActors.Num() > 0 && BaseMaterial)
     {
         int32 SuccessCount = 0;
-        
         for (const TWeakObjectPtr<AActor>& WeakActor : TargetActors)
         {
-            if (!WeakActor.IsValid())
-            {
-                continue;
-            }
-            
+            if (!WeakActor.IsValid()) continue;
             AActor* Actor = WeakActor.Get();
             UMeshComponent* MeshComp = GetMeshComponentFromActor(Actor);
-            
-            if (!MeshComp)
-            {
-                UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Actor '%s' no longer has mesh component, skipping"), *Actor->GetActorLabel());
-                continue;
-            }
-            
-            // Generate unique material name
-            FString MaterialName = FString::Printf(TEXT("MI_%s_%s"), 
-                *Actor->GetActorLabel().Replace(TEXT(" "), TEXT("_")), 
+            if (!MeshComp) continue;
+
+            FString MaterialName = FString::Printf(TEXT("MI_%s_%s"),
+                *Actor->GetActorLabel().Replace(TEXT(" "), TEXT("_")),
                 *Now.ToString(TEXT("%Y%m%d_%H%M%S")));
-            FString MaterialAssetPath = UComfyUIBlueprintLibrary::GenerateUniqueAssetName(TEXT("/Game/GeneratedMaterials"), MaterialName);
-            
-            // Create the material instance asset
+            FString MaterialAssetPath = UComfyUIBlueprintLibrary::GenerateUniqueAssetName(
+                TEXT("/Game/GeneratedMaterials"), MaterialName);
+
             UPackage* Package = CreatePackage(*MaterialAssetPath);
             UMaterialInstanceConstant* MaterialInstance = NewObject<UMaterialInstanceConstant>(
-                Package, 
-                FName(*FPaths::GetBaseFilename(MaterialAssetPath)), 
-                RF_Public | RF_Standalone
-            );
-            
-            if (!MaterialInstance)
-            {
-                UE_LOG(LogTemp, Error, TEXT("ComfyUI: Failed to create material instance for actor '%s'"), *Actor->GetActorLabel());
-                continue;
-            }
-            
-            // Set parent material
+                Package,
+                FName(*FPaths::GetBaseFilename(MaterialAssetPath)),
+                RF_Public | RF_Standalone);
+
+            if (!MaterialInstance) continue;
+
             MaterialInstance->SetParentEditorOnly(BaseMaterial);
-            
-            // Set texture parameter
-            MaterialInstance->SetTextureParameterValueEditorOnly(FMaterialParameterInfo(TEXT("BaseColorTexture")), PermanentTexture);
-            
-            // Mark as modified and save
+            MaterialInstance->SetTextureParameterValueEditorOnly(
+                FMaterialParameterInfo(TEXT("BaseColorTexture")), PermanentTexture);
             MaterialInstance->MarkPackageDirty();
             MaterialInstance->PostEditChange();
-            
-            // Notify asset registry
             FAssetRegistryModule::AssetCreated(MaterialInstance);
-            
-            // Apply the permanent material to the mesh
             MeshComp->SetMaterial(0, MaterialInstance);
-            
-            // Remove from dynamic material map since we're now using permanent material
             ActorMaterialMap.Remove(WeakActor);
-            
-            UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Created permanent material for '%s': %s"), *Actor->GetActorLabel(), *MaterialAssetPath);
             SuccessCount++;
         }
-        
-        if (SuccessCount > 0)
-        {
-            UpdateStatus(FString::Printf(TEXT("Saved texture and %d material(s) to project"), SuccessCount));
-            UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Saved texture and %d material(s)"), SuccessCount);
-        }
-        else
-        {
-            UpdateStatus(FString::Printf(TEXT("Saved texture to: %s (no materials created)"), *TextureAssetPath));
-        }
+        UpdateStatus(FString::Printf(TEXT("Saved texture and %d material(s) to project"), SuccessCount));
     }
     else
     {
-        // No target actors, just texture
         UpdateStatus(FString::Printf(TEXT("Saved texture to: %s"), *TextureAssetPath));
-        
-        LastImportedImagePath.Empty();
-        LastImportedTexture.Reset(); 
     }
-    
-    // Clear preview path so user can't accidentally import twice
+
     CurrentPreviewImagePath.Empty();
-    
     return FReply::Handled();
 }
 
-void SComfyUIPanel::OnGenerationComplete(bool bSuccess, const FString& PromptId)
+FReply SComfyUIPanel::OnApplyToActorsClicked()
 {
-    UE_LOG(LogTemp, Warning, TEXT("ComfyUI Panel: OnGenerationComplete CALLED - Success: %d, PromptId: %s"), bSuccess, *PromptId);
-
-    if (!bSuccess)
+    if (CurrentPreviewImagePath.IsEmpty() || TargetActors.Num() == 0)
     {
-        UpdateStatus(TEXT("Error: Generation failed"));
-        return;
+        UpdateStatus(TEXT("Error: Need a preview image and target actors"));
+        return FReply::Handled();
+    }
+    UTexture2D* Texture = UComfyUIBlueprintLibrary::LoadImageFromFile(CurrentPreviewImagePath);
+    if (Texture) ApplyMaterialToTargetActors(Texture);
+    return FReply::Handled();
+}
+
+FReply SComfyUIPanel::OnApplyToComposureClicked()
+{
+    if (CurrentPreviewImagePath.IsEmpty())
+    {
+        UpdateStatus(TEXT("Error: No preview image available"));
+        return FReply::Handled();
     }
 
-    LastImportedImagePath.Empty();
-    LastImportedTexture.Reset(); 
-
-    UpdateStatus(TEXT("Loading image..."));
-
-    // Capture weak pointer AND filename prefix for the lambda
-    TWeakPtr<SComfyUIPanel> CapturedWeakThis = WeakThis;  // Copy the weak pointer
-    FString FilePrefix = CurrentFilenamePrefix;
-    bool bShouldAutoApply = bAutoApplyEnabled;
-
-    if (GEditor)
+    UTexture2D* TextureToApply = nullptr;
+    if (LastImportedImagePath == CurrentPreviewImagePath && LastImportedTexture.IsValid())
     {
-        FTimerHandle DelayTimer;
-        GEditor->GetTimerManager()->SetTimer(
-            DelayTimer,
-            [CapturedWeakThis, FilePrefix, bShouldAutoApply]()  // Capture both
-            {
-                // Check if panel still exists
-                TSharedPtr<SComfyUIPanel> Panel = CapturedWeakThis.Pin();
-                if (!Panel.IsValid())
-                {
-                    UE_LOG(LogTemp, Warning, TEXT("ComfyUI Panel: Panel destroyed, skipping image load"));
-                    return;
-                }
-
-                // Get latest image
-                FString ImagePath = UComfyUIBlueprintLibrary::GetLatestOutputImage(FilePrefix);
-                UE_LOG(LogTemp, Warning, TEXT("ComfyUI Panel: Latest image path: %s"), *ImagePath);
-
-                if (ImagePath.IsEmpty())
-                {
-                    Panel->UpdateStatus(TEXT("Error: Could not find generated image"));
-                    UE_LOG(LogTemp, Error, TEXT("ComfyUI Panel: GetLatestOutputImage returned empty path"));
-                    return;
-                }
-
-                // Store the preview path for later import
-                Panel->CurrentPreviewImagePath = ImagePath;
-
-                UTexture2D* Texture = UComfyUIBlueprintLibrary::LoadImageFromFile(ImagePath);
-
-                if (!Texture)
-                {
-                    Panel->UpdateStatus(TEXT("Error: Could not load image"));
-                    return;
-                }
-
-                if (bShouldAutoApply && Panel->TargetActors.Num() > 0)
-                {
-                    Panel->ApplyMaterialToTargetActors(Texture);
-                }
-                else
-                {
-                    Panel->UpdateStatus(TEXT("Preview ready! Click 'Import to Project' to save."));
-                }
-                
-                Panel->LoadAndDisplayImage(ImagePath);
-            },
-            0.5f,
-            false
-        );
-    }
-}
-
-// ============================================================================
-// Generation Callbacks
-// ============================================================================
-
-void SComfyUIPanel::OnWorkflowSubmitted(bool bSuccess, const FString& ResponseJson, const FString& PromptId)
-{
-    // Note: This function is kept for compatibility but logic is handled inside StartGeneration lambda
-    if (!bSuccess)
-    {
-        UpdateStatus(TEXT("Error: Failed to submit workflow"));
-        return;
-    }
-}
-
-
-
-// ============================================================================
-// Helpers
-// ============================================================================
-void SComfyUIPanel::OnWidthChanged(TSharedPtr<FString> NewSelection, ESelectInfo::Type SelectInfo)
-{
-    SelectedWidth = NewSelection;
-}
-
-void SComfyUIPanel::OnHeightChanged(TSharedPtr<FString> NewSelection, ESelectInfo::Type SelectInfo)
-{
-    SelectedHeight = NewSelection;
-}
-
-void SComfyUIPanel::OnCustomWidthChanged(int32 NewValue)
-{
-    CustomWidth = NewValue;
-}
-
-void SComfyUIPanel::OnCustomHeightChanged(int32 NewValue)
-{
-    CustomHeight = NewValue;
-}
-
-void SComfyUIPanel::UpdateStatus(const FString& Status)
-{
-    StatusText = Status;
-    UE_LOG(LogTemp, Warning, TEXT("ComfyUI Panel: %s"), *Status);
-}
-
-TArray<AActor*> SComfyUIPanel::GetSelectedActors()
-{
-    TArray<AActor*> SelectedActors;
-    
-    if (!GEditor)
-    {
-        return SelectedActors;
-    }
-    
-    USelection* Selection = GEditor->GetSelectedActors();
-    if (!Selection)
-    {
-        return SelectedActors;
-    }
-    
-    // Get all selected actors
-    for (FSelectionIterator It(*Selection); It; ++It)
-    {
-        if (AActor* Actor = Cast<AActor>(*It))
-        {
-            SelectedActors.Add(Actor);
-        }
-    }
-    
-    return SelectedActors;
-}
-void SComfyUIPanel::OnAutoApplyCheckChanged(ECheckBoxState NewState)
-{
-    bAutoApplyEnabled = (NewState == ECheckBoxState::Checked);
-    
-    if (bAutoApplyEnabled)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Auto-apply enabled"));
+        TextureToApply = LastImportedTexture.Get();
     }
     else
     {
-        UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Auto-apply disabled"));
+        FDateTime Now = FDateTime::Now();
+        FString TextureName = FString::Printf(TEXT("T_Composure_%s"), *Now.ToString(TEXT("%Y%m%d_%H%M%S")));
+        FString TextureAssetPath = UComfyUIBlueprintLibrary::GenerateUniqueAssetName(
+            TEXT("/Game/GeneratedTextures"), TextureName);
+        TextureToApply = UComfyUIBlueprintLibrary::ImportImageAsAsset(CurrentPreviewImagePath, TextureAssetPath);
+        if (!TextureToApply)
+        {
+            UpdateStatus(TEXT("Error: Failed to import texture"));
+            return FReply::Handled();
+        }
+        LastImportedImagePath = CurrentPreviewImagePath;
+        LastImportedTexture = TextureToApply;
     }
+
+    ApplyTextureToComposurePlates(TextureToApply);
+    return FReply::Handled();
 }
 
 FReply SComfyUIPanel::OnAddSelectedClicked()
@@ -1001,807 +1005,284 @@ FReply SComfyUIPanel::OnClearAllClicked()
     return FReply::Handled();
 }
 
-UMeshComponent* SComfyUIPanel::GetMeshComponentFromActor(AActor* Actor)
+// ============================================================================
+// Post-Completion Actions
+// ============================================================================
+
+void SComfyUIPanel::Apply360ToSkyLight(UTexture2D* Texture360)
 {
-    if (!Actor)
+    if (!GEditor || !GEditor->GetEditorWorldContext().World()) return;
+    UWorld* World = GEditor->GetEditorWorldContext().World();
+
+    // Remove old sky spheres
+    TArray<AActor*> ActorsToDestroy;
+    for (TActorIterator<AStaticMeshActor> It(World); It; ++It)
     {
-        return nullptr;
+        if (It->GetActorLabel().Contains(TEXT("AI_360_SkySphere")))
+            ActorsToDestroy.Add(*It);
     }
-    
-    // Try to find StaticMeshComponent first (most common)
-    if (UStaticMeshComponent* StaticMesh = Actor->FindComponentByClass<UStaticMeshComponent>())
+    for (AActor* Actor : ActorsToDestroy)
+        World->DestroyActor(Actor);
+
+    // Create sky sphere
+    AStaticMeshActor* SkySphere = World->SpawnActor<AStaticMeshActor>();
+    UStaticMesh* SphereMesh = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Sphere.Sphere"));
+
+    if (SkySphere && SphereMesh)
     {
-        return StaticMesh;
+        SkySphere->GetStaticMeshComponent()->SetStaticMesh(SphereMesh);
+        SkySphere->SetActorLabel(TEXT("AI_360_SkySphere"));
+        SkySphere->SetActorScale3D(FVector(300.0f));
+
+        if (BaseMaterial)
+        {
+            UMaterialInstanceDynamic* SkyMat = UMaterialInstanceDynamic::Create(BaseMaterial, SkySphere);
+            SkyMat->SetTextureParameterValue(TEXT("BaseColorTexture"), Texture360);
+            SkySphere->GetStaticMeshComponent()->SetMaterial(0, SkyMat);
+            SkySphere->GetStaticMeshComponent()->SetCastShadow(false);
+        }
     }
-    
-    // Try SkeletalMeshComponent (for characters, animated meshes)
-    if (USkeletalMeshComponent* SkeletalMesh = Actor->FindComponentByClass<USkeletalMeshComponent>())
+
+    // Find or create SkyLight
+    ASkyLight* SkyLight = nullptr;
+    for (TActorIterator<ASkyLight> It(World); It; ++It) { SkyLight = *It; break; }
+    if (!SkyLight) SkyLight = World->SpawnActor<ASkyLight>();
+
+    if (SkyLight && SkyLight->GetLightComponent())
     {
-        return SkeletalMesh;
+        USkyLightComponent* SkyLightComp = SkyLight->GetLightComponent();
+        SkyLightComp->SourceType = ESkyLightSourceType::SLS_CapturedScene;
+        SkyLightComp->Intensity = 2.0f;
+        SkyLightComp->Mobility = EComponentMobility::Movable;
+        SkyLightComp->MarkRenderStateDirty();
+        SkyLightComp->RecaptureSky();
     }
-    
-    // No mesh component found
-    return nullptr;
+
+    if (GEditor) GEditor->RedrawAllViewports();
+    UpdateStatus(TEXT("360° applied to scene lighting!"));
 }
 
-bool SComfyUIPanel::IsActorValidForMaterial(AActor* Actor)
-{
-    if (!Actor)
-    {
-        return false;
-    }
-    
-    return GetMeshComponentFromActor(Actor) != nullptr;
-}
 void SComfyUIPanel::ApplyMaterialToTargetActors(UTexture2D* Texture)
 {
-    if (!Texture)
-    {
-        UE_LOG(LogTemp, Error, TEXT("ComfyUI: Cannot apply null texture"));
-        return;
-    }
-    
-    if (!BaseMaterial)
-    {
-        UE_LOG(LogTemp, Error, TEXT("ComfyUI: Base material not loaded"));
-        return;
-    }
-    
+    if (!Texture || !BaseMaterial) return;
+
     int32 AppliedCount = 0;
-    int32 FailedCount = 0;
-    
-    // Clean up invalid actor entries
-    TArray<TWeakObjectPtr<AActor>> InvalidActors;
-    for (auto& Pair : ActorMaterialMap)
+
+    // Clean up stale entries
+    for (auto It = ActorMaterialMap.CreateIterator(); It; ++It)
     {
-        if (!Pair.Key.IsValid())
-        {
-            InvalidActors.Add(Pair.Key);
-        }
+        if (!It.Key().IsValid()) It.RemoveCurrent();
     }
-    for (const TWeakObjectPtr<AActor>& InvalidActor : InvalidActors)
-    {
-        ActorMaterialMap.Remove(InvalidActor);
-    }
-    
-    // Apply material to each target actor
+
     for (const TWeakObjectPtr<AActor>& WeakActor : TargetActors)
     {
-        if (!WeakActor.IsValid())
-        {
-            continue;
-        }
-        
+        if (!WeakActor.IsValid()) continue;
         AActor* Actor = WeakActor.Get();
         UMeshComponent* MeshComp = GetMeshComponentFromActor(Actor);
-        
-        if (!MeshComp)
-        {
-            UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Actor '%s' no longer has mesh component, skipping"), *Actor->GetActorLabel());
-            FailedCount++;
-            continue;
-        }
-        
-        // Get or create material instance for this actor
+        if (!MeshComp) continue;
+
         UMaterialInstanceDynamic* DynMaterial = nullptr;
-        
         if (ActorMaterialMap.Contains(WeakActor))
         {
-            // Reuse existing material
             DynMaterial = ActorMaterialMap[WeakActor];
-            UE_LOG(LogTemp, Log, TEXT("ComfyUI: Reusing material for actor '%s'"), *Actor->GetActorLabel());
         }
         else
         {
-            // Create new material instance for this actor
             DynMaterial = UMaterialInstanceDynamic::Create(BaseMaterial, MeshComp);
             ActorMaterialMap.Add(WeakActor, DynMaterial);
-            
-            // Apply material to slot 0
             MeshComp->SetMaterial(0, DynMaterial);
-            UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Created new material for actor '%s'"), *Actor->GetActorLabel());
         }
-        
+
         if (DynMaterial)
         {
-            // Update texture parameter
             DynMaterial->SetTextureParameterValue(TEXT("BaseColorTexture"), Texture);
             AppliedCount++;
-            UE_LOG(LogTemp, Log, TEXT("ComfyUI: Applied texture to actor '%s'"), *Actor->GetActorLabel());
         }
-        else
+    }
+
+    UpdateStatus(FString::Printf(TEXT("Applied material to %d actor(s)"), AppliedCount));
+}
+
+void SComfyUIPanel::ApplyTextureToComposurePlates(UTexture2D* Texture)
+{
+    if (!Texture || !GEditor || !GEditor->GetEditorWorldContext().World()) return;
+    UWorld* World = GEditor->GetEditorWorldContext().World();
+
+    TArray<AActor*> AllActors;
+    UGameplayStatics::GetAllActorsOfClass(World, AActor::StaticClass(), AllActors);
+    int32 PlatesUpdated = 0;
+
+    for (AActor* Actor : AllActors)
+    {
+        if (Actor->GetClass()->GetName() != TEXT("CompositeActor")) continue;
+
+        UClass* ActorClass = Actor->GetClass();
+        FProperty* LayersProp = ActorClass->FindPropertyByName(TEXT("CompositeLayers"));
+        FArrayProperty* ArrayProp = CastField<FArrayProperty>(LayersProp);
+        if (!ArrayProp) continue;
+
+        FScriptArrayHelper ArrayHelper(ArrayProp, LayersProp->ContainerPtrToValuePtr<void>(Actor));
+        for (int32 i = 0; i < ArrayHelper.Num(); i++)
         {
-            UE_LOG(LogTemp, Error, TEXT("ComfyUI: Failed to create material for actor '%s'"), *Actor->GetActorLabel());
-            FailedCount++;
+            UObject* LayerObj = *reinterpret_cast<UObject**>(ArrayHelper.GetRawPtr(i));
+            if (!LayerObj || !LayerObj->GetClass()->GetName().Contains(TEXT("Plate"))) continue;
+
+            FProperty* TextureProp = LayerObj->GetClass()->FindPropertyByName(TEXT("Texture"));
+            FObjectProperty* ObjProp = CastField<FObjectProperty>(TextureProp);
+            if (!ObjProp) continue;
+
+            ObjProp->SetObjectPropertyValue(TextureProp->ContainerPtrToValuePtr<void>(LayerObj), Texture);
+            FPropertyChangedEvent PropertyEvent(TextureProp);
+            LayerObj->PostEditChangeProperty(PropertyEvent);
+            LayerObj->Modify();
+            PlatesUpdated++;
         }
+
+        Actor->Modify();
+        FPropertyChangedEvent ActorPropertyEvent(LayersProp);
+        Actor->PostEditChangeProperty(ActorPropertyEvent);
     }
-    
-    if (AppliedCount > 0)
-    {
-        UpdateStatus(FString::Printf(TEXT("Applied material to %d actor(s)"), AppliedCount));
-        UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Applied material to %d actor(s), %d failed"), AppliedCount, FailedCount);
-    }
-    else
-    {
-        UpdateStatus(TEXT("Failed to apply materials"));
-        UE_LOG(LogTemp, Error, TEXT("ComfyUI: Failed to apply materials to any actors"));
-    }
+
+    if (GEditor) GEditor->RedrawAllViewports();
+    UpdateStatus(PlatesUpdated > 0
+        ? FString::Printf(TEXT("Applied texture to %d Composure plate(s)"), PlatesUpdated)
+        : TEXT("No Composure plate layers found"));
+}
+
+// ============================================================================
+// UI Event Handlers
+// ============================================================================
+
+void SComfyUIPanel::OnPromptTextChanged(const FText& NewText)       { PromptText = NewText.ToString(); }
+void SComfyUIPanel::OnNegativePromptTextChanged(const FText& NewText) { NegativePromptText = NewText.ToString(); }
+void SComfyUIPanel::OnWidthChanged(TSharedPtr<FString> NewSelection, ESelectInfo::Type)  { SelectedWidth = NewSelection; }
+void SComfyUIPanel::OnHeightChanged(TSharedPtr<FString> NewSelection, ESelectInfo::Type) { SelectedHeight = NewSelection; }
+void SComfyUIPanel::OnCustomWidthChanged(int32 NewValue)  { CustomWidth = NewValue; }
+void SComfyUIPanel::OnCustomHeightChanged(int32 NewValue) { CustomHeight = NewValue; }
+
+void SComfyUIPanel::OnAutoApplyCheckChanged(ECheckBoxState NewState)
+{
+    bAutoApplyEnabled = (NewState == ECheckBoxState::Checked);
+}
+
+// ============================================================================
+// Actor Helpers
+// ============================================================================
+
+TArray<AActor*> SComfyUIPanel::GetSelectedActors()
+{
+    TArray<AActor*> Result;
+    if (!GEditor) return Result;
+    USelection* Selection = GEditor->GetSelectedActors();
+    if (!Selection) return Result;
+    for (FSelectionIterator It(*Selection); It; ++It)
+        if (AActor* Actor = Cast<AActor>(*It))
+            Result.Add(Actor);
+    return Result;
 }
 
 void SComfyUIPanel::AddSelectedActorsToList()
 {
     TArray<AActor*> SelectedActors = GetSelectedActors();
-    
-    if (SelectedActors.Num() == 0)
-    {
-        UpdateStatus(TEXT("No actors selected"));
-        UE_LOG(LogTemp, Warning, TEXT("ComfyUI: No actors selected"));
-        return;
-    }
-    
-    int32 AddedCount = 0;
-    int32 InvalidCount = 0;
-    TArray<FString> InvalidActorNames;
-    
+    if (SelectedActors.Num() == 0) { UpdateStatus(TEXT("No actors selected")); return; }
+
+    int32 AddedCount = 0, InvalidCount = 0;
     for (AActor* Actor : SelectedActors)
     {
-        if (!Actor)
-        {
-            continue;
-        }
-        
-        // Validate actor has mesh component
-        if (!IsActorValidForMaterial(Actor))
-        {
-            InvalidCount++;
-            InvalidActorNames.Add(Actor->GetActorLabel());
-            UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Skipping actor '%s' - no mesh component found"), *Actor->GetActorLabel());
-            continue;  // ← IMPORTANT: Skip this actor, don't add it
-        }
-        
-        // Check if already in list
+        if (!Actor) continue;
+        if (!IsActorValidForMaterial(Actor)) { InvalidCount++; continue; }
+
         bool bAlreadyAdded = false;
-        for (const TWeakObjectPtr<AActor>& ExistingActor : TargetActors)
-        {
-            if (ExistingActor.IsValid() && ExistingActor.Get() == Actor)
-            {
-                bAlreadyAdded = true;
-                break;
-            }
-        }
-        
-        if (!bAlreadyAdded)
-        {
-            TargetActors.Add(Actor);  // ← ONLY log should be here
-            AddedCount++;
-            UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Added actor to list: %s"), *Actor->GetActorLabel());
-        }
-        else
-        {
-            UE_LOG(LogTemp, Log, TEXT("ComfyUI: Actor '%s' already in list, skipping"), *Actor->GetActorLabel());
-        }
+        for (const TWeakObjectPtr<AActor>& Existing : TargetActors)
+            if (Existing.IsValid() && Existing.Get() == Actor) { bAlreadyAdded = true; break; }
+
+        if (!bAlreadyAdded) { TargetActors.Add(Actor); AddedCount++; }
     }
-    
-    // Update status with results
-    if (AddedCount > 0 && InvalidCount == 0)
-    {
-        UpdateStatus(FString::Printf(TEXT("Added %d actor(s) to target list"), AddedCount));
-    }
-    else if (AddedCount > 0 && InvalidCount > 0)
-    {
-        UpdateStatus(FString::Printf(TEXT("Added %d actor(s), skipped %d (no mesh component)"), AddedCount, InvalidCount));
-    }
-    else if (InvalidCount > 0)
-    {
-        FString InvalidNames = FString::Join(InvalidActorNames, TEXT(", "));
-        UpdateStatus(FString::Printf(TEXT("Cannot add: %s - no mesh component found"), *InvalidNames));
-    }
-    else
-    {
-        UpdateStatus(TEXT("Selected actor(s) already in list"));
-    }
-    
-    UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Added %d actor(s) to target list. Total: %d. Skipped %d invalid."), AddedCount, TargetActors.Num(), InvalidCount);
+
+    UpdateStatus(FString::Printf(TEXT("Added %d actor(s), skipped %d invalid"), AddedCount, InvalidCount));
 }
 
-void SComfyUIPanel::ClearTargetActors()
-{
-    int32 Count = TargetActors.Num();
-    TargetActors.Empty();
-    UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Cleared target actor list (%d actors removed)"), Count);
-}
-
+void SComfyUIPanel::ClearTargetActors()  { TargetActors.Empty(); }
 void SComfyUIPanel::RemoveActorFromList(AActor* Actor)
 {
     for (int32 i = TargetActors.Num() - 1; i >= 0; i--)
-    {
         if (TargetActors[i].IsValid() && TargetActors[i].Get() == Actor)
-        {
-            TargetActors.RemoveAt(i);
-            UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Removed actor from list: %s"), *Actor->GetActorLabel());
-            break;
-        }
-    }
+            { TargetActors.RemoveAt(i); break; }
 }
 
-void SComfyUIPanel::ApplyTextureToComposurePlates(UTexture2D* Texture)
+UMeshComponent* SComfyUIPanel::GetMeshComponentFromActor(AActor* Actor)
 {
-    if (!Texture)
-    {
-        UE_LOG(LogTemp, Error, TEXT("ComfyUI: Cannot apply null texture to Composure"));
-        return;
-    }
-    
-    if (!GEditor || !GEditor->GetEditorWorldContext().World())
-    {
-        UE_LOG(LogTemp, Error, TEXT("ComfyUI: No editor world available"));
-        return;
-    }
-    
-    UWorld* World = GEditor->GetEditorWorldContext().World();
-    
-    // Find all actors
-    TArray<AActor*> AllActors;
-    UGameplayStatics::GetAllActorsOfClass(World, AActor::StaticClass(), AllActors);
-    
-    int32 PlatesUpdated = 0;
-    
-    for (AActor* Actor : AllActors)
-    {
-        FString ClassName = Actor->GetClass()->GetName();
-        
-        // Look for CompositeActor
-        if (ClassName == TEXT("CompositeActor"))
-        {
-            UE_LOG(LogTemp, Log, TEXT("ComfyUI: Found CompositeActor: %s"), *Actor->GetActorLabel());
-            
-            // Access CompositeLayers property
-            UClass* ActorClass = Actor->GetClass();
-            FProperty* LayersProp = ActorClass->FindPropertyByName(TEXT("CompositeLayers"));
-            
-            if (!LayersProp)
-            {
-                continue;
-            }
-            
-            FArrayProperty* ArrayProp = CastField<FArrayProperty>(LayersProp);
-            if (!ArrayProp)
-            {
-                continue;
-            }
-            
-            FScriptArrayHelper ArrayHelper(ArrayProp, LayersProp->ContainerPtrToValuePtr<void>(Actor));
-            int32 NumLayers = ArrayHelper.Num();
-            
-            for (int32 i = 0; i < NumLayers; i++)
-            {
-                UObject* LayerObj = *reinterpret_cast<UObject**>(ArrayHelper.GetRawPtr(i));
-                if (!LayerObj)
-                {
-                    continue;
-                }
-                
-                FString LayerClassName = LayerObj->GetClass()->GetName();
-                
-                // Check if it's a plate layer
-                if (LayerClassName.Contains(TEXT("Plate")))
-                {
-                    FString LayerName = LayerObj->GetName();
-                    UE_LOG(LogTemp, Log, TEXT("ComfyUI: Found plate layer: %s"), *LayerName);
-                    
-                    // Find and set Texture property
-                    FProperty* TextureProp = LayerObj->GetClass()->FindPropertyByName(TEXT("Texture"));
-                    if (TextureProp)
-                    {
-                        // Set the texture
-                        FObjectProperty* ObjProp = CastField<FObjectProperty>(TextureProp);
-                        if (ObjProp)
-                        {
-                            ObjProp->SetObjectPropertyValue(TextureProp->ContainerPtrToValuePtr<void>(LayerObj), Texture);
-                            
-                            UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Set texture on plate layer '%s' to '%s'"), *LayerName, *Texture->GetName());
-                            
-                            // CRITICAL: Notify the layer object that a property changed
-                            FPropertyChangedEvent PropertyEvent(TextureProp);
-                            LayerObj->PostEditChangeProperty(PropertyEvent);
-                            
-                            // Mark layer as modified
-                            LayerObj->Modify();
-                            LayerObj->MarkPackageDirty();
-                            
-                            PlatesUpdated++;
-                        }
-                    }
-                }
-            }
-            
-            // CRITICAL: Mark the CompositeActor as modified and trigger update
-            Actor->Modify();
-            Actor->MarkPackageDirty();
-            
-            // Try to call any refresh/update functions on the CompositeActor
-            // Look for common update function names
-            UFunction* RefreshFunc = Actor->FindFunction(FName(TEXT("RefreshComposite")));
-            if (!RefreshFunc)
-            {
-                RefreshFunc = Actor->FindFunction(FName(TEXT("Refresh")));
-            }
-            if (!RefreshFunc)
-            {
-                RefreshFunc = Actor->FindFunction(FName(TEXT("Update")));
-            }
-            if (!RefreshFunc)
-            {
-                RefreshFunc = Actor->FindFunction(FName(TEXT("RecomposeNow")));
-            }
-            
-            if (RefreshFunc)
-            {
-                UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Calling refresh function: %s"), *RefreshFunc->GetName());
-                Actor->ProcessEvent(RefreshFunc, nullptr);
-            }
-            else
-            {
-                UE_LOG(LogTemp, Log, TEXT("ComfyUI: No refresh function found, trying PostEditChangeProperty"));
-                
-                // Trigger PostEditChangeProperty on the actor itself
-                FPropertyChangedEvent ActorPropertyEvent(LayersProp);
-                Actor->PostEditChangeProperty(ActorPropertyEvent);
-            }
-        }
-    }
-    
-    // Force viewport refresh
-    if (GEditor)
-    {
-        GEditor->RedrawAllViewports();
-    }
-    
-    if (PlatesUpdated > 0)
-    {
-        UpdateStatus(FString::Printf(TEXT("Applied texture to %d Composure plate(s)"), PlatesUpdated));
-        UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Successfully updated %d Composure plate layer(s)"), PlatesUpdated);
-    }
-    else
-    {
-        UpdateStatus(TEXT("No Composure plate layers found"));
-        UE_LOG(LogTemp, Warning, TEXT("ComfyUI: No Composure plate layers found to update"));
-    }
+    if (!Actor) return nullptr;
+    if (UStaticMeshComponent* SM = Actor->FindComponentByClass<UStaticMeshComponent>()) return SM;
+    if (USkeletalMeshComponent* SK = Actor->FindComponentByClass<USkeletalMeshComponent>()) return SK;
+    return nullptr;
 }
 
-FReply SComfyUIPanel::OnApplyToActorsClicked()
+bool SComfyUIPanel::IsActorValidForMaterial(AActor* Actor)
 {
-    if (CurrentPreviewImagePath.IsEmpty())
-    {
-        UpdateStatus(TEXT("Error: No preview image available"));
-        return FReply::Handled();
-    }
-    
-    if (TargetActors.Num() == 0)
-    {
-        UpdateStatus(TEXT("Error: No target actors in list"));
-        return FReply::Handled();
-    }
-    
-    // Load texture from preview
-    UTexture2D* Texture = UComfyUIBlueprintLibrary::LoadImageFromFile(CurrentPreviewImagePath);
-    if (!Texture)
-    {
-        UpdateStatus(TEXT("Error: Failed to load preview texture"));
-        return FReply::Handled();
-    }
-    
-    // Apply to all target actors
-    ApplyMaterialToTargetActors(Texture);
-    
-    return FReply::Handled();
+    return Actor && GetMeshComponentFromActor(Actor) != nullptr;
 }
 
-FReply SComfyUIPanel::OnGenerate360Clicked()
-{
-    if (CurrentPreviewImagePath.IsEmpty())
-    {
-        UpdateStatus(TEXT("Error: No preview image available"));
-        return FReply::Handled();
-    }
-    
-    // Extract filename
-    FString Filename = FPaths::GetCleanFilename(CurrentPreviewImagePath);
-    FString OutputReference = Filename + TEXT(" [output]");
-    
-    UE_LOG(LogTemp, Log, TEXT("ComfyUI: Using image: %s"), *Filename);
-    
-    // Load the API format workflow
-    FString WorkflowPath;
-    if (const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("ComfyUI")))
-    {
-        WorkflowPath = FPaths::Combine(Plugin->GetBaseDir(), TEXT("ComfyUI_windows_portable/ComfyUI/user/default/workflows/360_Kontext-Small-API.json"));
-    }
-    
-    if (!FPaths::FileExists(WorkflowPath))
-    {
-        UpdateStatus(TEXT("Error: 360 workflow (API format) not found"));
-        UE_LOG(LogTemp, Error, TEXT("ComfyUI: Workflow not found at: %s"), *WorkflowPath);
-        return FReply::Handled();
-    }
-    
-    FString WorkflowJson;
-    if (!FFileHelper::LoadFileToString(WorkflowJson, *WorkflowPath))
-    {
-        UpdateStatus(TEXT("Error: Failed to load 360 workflow"));
-        return FReply::Handled();
-    }
-    
-    // Parse the API format workflow (object with string keys)
-    TSharedPtr<FJsonObject> WorkflowObj;
-    TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(WorkflowJson);
-    
-    if (!FJsonSerializer::Deserialize(Reader, WorkflowObj))
-    {
-        UpdateStatus(TEXT("Error: Failed to parse 360 workflow"));
-        return FReply::Handled();
-    }
-    
-    // Update node 147
-    if (TSharedPtr<FJsonObject> Node147 = WorkflowObj->GetObjectField(TEXT("147")))
-    {
-        TSharedPtr<FJsonObject> Inputs = Node147->GetObjectField(TEXT("inputs"));
-        Inputs->SetStringField(TEXT("image"), OutputReference);
-        UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Updated node 147 to: %s"), *OutputReference);
-    }
-    
-    // Update node 142
-    if (TSharedPtr<FJsonObject> Node142 = WorkflowObj->GetObjectField(TEXT("142")))
-    {
-        TSharedPtr<FJsonObject> Inputs = Node142->GetObjectField(TEXT("inputs"));
-        Inputs->SetStringField(TEXT("image"), OutputReference);
-        UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Updated node 142 to: %s"), *OutputReference);
-    }
-    
-    // Build the prompt wrapper
-    TSharedPtr<FJsonObject> Wrapper = MakeShared<FJsonObject>();
-    Wrapper->SetObjectField(TEXT("prompt"), WorkflowObj);
-    
-    // Serialize
-    FString ModifiedWorkflowJson;
-    TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&ModifiedWorkflowJson);
-    FJsonSerializer::Serialize(Wrapper.ToSharedRef(), Writer);
-    
-    // Submit via HTTP
-    const UComfyUISettings* Settings = GetDefault<UComfyUISettings>();
-    FString BaseUrl = Settings ? Settings->BaseUrl : TEXT("http://127.0.0.1:8188");
-    
-    TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
-    Request->SetURL(BaseUrl + TEXT("/prompt"));
-    Request->SetVerb(TEXT("POST"));
-    Request->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
-    Request->SetContentAsString(ModifiedWorkflowJson);
-    
-    Request->OnProcessRequestComplete().BindLambda(
-        [this](FHttpRequestPtr, FHttpResponsePtr Response, bool bSucceeded)
-        {
-            if (bSucceeded && Response.IsValid() && EHttpResponseCodes::IsOk(Response->GetResponseCode()))
-            {
-                // Extract prompt ID from response
-                TSharedPtr<FJsonObject> JsonResponse;
-                TSharedRef<TJsonReader<>> JsonReader = TJsonReaderFactory<>::Create(Response->GetContentAsString());
-                
-                if (FJsonSerializer::Deserialize(JsonReader, JsonResponse) && JsonResponse.IsValid())
-                {
-                    Current360PromptId = JsonResponse->GetStringField(TEXT("prompt_id"));
-                    bIs360Generation = true; // Flag this as 360 generation
-                    
-                    UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Queued 360 workflow with prompt_id: %s"), *Current360PromptId);
-                    
-                    // Watch for completion
-                    if (FComfyUIModule* Module = FModuleManager::GetModulePtr<FComfyUIModule>(TEXT("ComfyUI")))
-                    {
-                        TSharedPtr<FComfyUIWebSocketHandler> WSHandler = Module->GetWebSocketHandler();
-                        if (WSHandler.IsValid())
-                        {
-                            FComfyUIWorkflowCompleteDelegateNative CompleteDelegate;
-                            CompleteDelegate.BindSP(SharedThis(this), &SComfyUIPanel::On360GenerationComplete);
-                            WSHandler->WatchPrompt(Current360PromptId, CompleteDelegate);
-                        }
-                    }
-                    
-                    UpdateStatus(TEXT("Generating 360° panorama..."));
-                }
-            }
-            else
-            {
-                UpdateStatus(TEXT("Error: Failed to queue 360 workflow"));
-                UE_LOG(LogTemp, Error, TEXT("ComfyUI: 360 workflow submission failed"));
-                if (Response.IsValid())
-                {
-                    UE_LOG(LogTemp, Error, TEXT("ComfyUI: Response: %s"), *Response->GetContentAsString());
-                }
-            }
-        });
-    
-    Request->ProcessRequest();
-    
-    return FReply::Handled();
-}
+// ============================================================================
+// Display / Material
+// ============================================================================
 
-void SComfyUIPanel::LoadBaseMaterial()
+void SComfyUIPanel::UpdateStatus(const FString& Status)
 {
-    if (BaseMaterial)
-    {
-        return; // Already loaded
-    }
-    
-    BaseMaterial = LoadObject<UMaterial>(nullptr, 
-        TEXT("/ComfyUI/Materials/M_ComfyUI_Base.M_ComfyUI_Base"));
-    
-    if (BaseMaterial)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Successfully loaded base material"));
-    }
-    else
-    {
-        UE_LOG(LogTemp, Error, TEXT("ComfyUI: FAILED to load base material from /ComfyUI/Materials/M_ComfyUI_Base"));
-    }
+    StatusText = Status;
+    UE_LOG(LogTemp, Warning, TEXT("ComfyUI Panel: %s"), *Status);
 }
 
 void SComfyUIPanel::LoadAndDisplayImage(const FString& FilePath)
 {
     UTexture2D* Texture = UComfyUIBlueprintLibrary::LoadImageFromFile(FilePath);
-    if (!Texture)
-    {
-        UE_LOG(LogTemp, Error, TEXT("ComfyUI Panel: Failed to load texture from %s"), *FilePath);
-        return;
-    }
+    if (!Texture) return;
 
-    // Keep the texture alive by adding to root
     Texture->AddToRoot();
-    
-    // Remove old texture from root if it exists
+
     if (ImageBrush.IsValid() && ImageBrush->GetResourceObject())
-    {
-        if (UTexture2D* OldTexture = Cast<UTexture2D>(ImageBrush->GetResourceObject()))
-        {
-            OldTexture->RemoveFromRoot();
-        }
-    }
+        if (UTexture2D* Old = Cast<UTexture2D>(ImageBrush->GetResourceObject()))
+            Old->RemoveFromRoot();
 
     ImageBrush = MakeShared<FSlateBrush>();
     ImageBrush->SetResourceObject(Texture);
     ImageBrush->ImageSize = FVector2D(Texture->GetSizeX(), Texture->GetSizeY());
     ImageBrush->DrawAs = ESlateBrushDrawType::Image;
-    ImageBrush->Tiling = ESlateBrushTileType::NoTile;  // Don't tile
+    ImageBrush->Tiling = ESlateBrushTileType::NoTile;
 
     if (PreviewImage.IsValid())
-    {
         PreviewImage->SetImage(ImageBrush.Get());
-    }
 }
-FReply SComfyUIPanel::OnApplyToComposureClicked()
+
+void SComfyUIPanel::LoadBaseMaterial()
 {
-    if (CurrentPreviewImagePath.IsEmpty())
+    if (BaseMaterial) return;
+    BaseMaterial = LoadObject<UMaterial>(nullptr,
+        TEXT("/ComfyUI/Materials/M_ComfyUI_Base"));
+
+    if (BaseMaterial)
     {
-        UpdateStatus(TEXT("Error: No preview image available"));
-        return FReply::Handled();
-    }
-    
-    UTexture2D* TextureToApply = nullptr;
-    
-    // Check if we already imported this exact image
-    if (LastImportedImagePath == CurrentPreviewImagePath && LastImportedTexture.IsValid())
-    {
-        // Reuse the existing texture
-        TextureToApply = LastImportedTexture.Get();
-        UE_LOG(LogTemp, Log, TEXT("ComfyUI: Reusing previously imported texture: %s"), *TextureToApply->GetPathName());
+        UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Base material loaded"));
     }
     else
     {
-        // Import as new permanent texture asset
-        FDateTime Now = FDateTime::Now();
-        FString TextureName = FString::Printf(TEXT("T_Composure_%s"), *Now.ToString(TEXT("%Y%m%d_%H%M%S")));
-        FString TextureAssetPath = UComfyUIBlueprintLibrary::GenerateUniqueAssetName(TEXT("/Game/GeneratedTextures"), TextureName);
-        
-        TextureToApply = UComfyUIBlueprintLibrary::ImportImageAsAsset(CurrentPreviewImagePath, TextureAssetPath);
-        if (!TextureToApply)
-        {
-            UpdateStatus(TEXT("Error: Failed to import texture"));
-            return FReply::Handled();
-        }
-        
-        // Cache it
-        LastImportedImagePath = CurrentPreviewImagePath;
-        LastImportedTexture = TextureToApply;
-        
-        UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Imported new texture as: %s"), *TextureAssetPath);
+        UE_LOG(LogTemp, Error, TEXT("ComfyUI: Failed to load base material"));
     }
-    
-    // Apply texture to Composure plates
-    ApplyTextureToComposurePlates(TextureToApply);
-    
-    return FReply::Handled();
+        
 }
 
-void SComfyUIPanel::On360GenerationComplete(bool bSuccess, const FString& PromptId)
-{
-    UE_LOG(LogTemp, Warning, TEXT("ComfyUI: 360 generation complete - Success: %d, PromptId: %s"), bSuccess, *PromptId);
-    
-    if (!bSuccess)
-    {
-        UpdateStatus(TEXT("Error: 360° generation failed"));
-        bIs360Generation = false;
-        return;
-    }
-    
-    UpdateStatus(TEXT("Loading 360° image..."));
-    
-    // Get the latest image with "Kontext_Upscale" prefix
-    FString ImagePath = UComfyUIBlueprintLibrary::GetLatestOutputImage(TEXT("Kontext_Upscale"));
-    
-    if (ImagePath.IsEmpty())
-    {
-        UpdateStatus(TEXT("Error: Could not find 360° output image"));
-        UE_LOG(LogTemp, Error, TEXT("ComfyUI: No image found with prefix 'Kontext_Upscale'"));
-        bIs360Generation = false;
-        return;
-    }
-    
-    UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Found 360° image: %s"), *ImagePath);
-    
-    // Import as permanent texture
-    FDateTime Now = FDateTime::Now();
-    FString TextureName = FString::Printf(TEXT("T_360_HDRI_%s"), *Now.ToString(TEXT("%Y%m%d_%H%M%S")));
-    FString TextureAssetPath = UComfyUIBlueprintLibrary::GenerateUniqueAssetName(TEXT("/Game/GeneratedTextures"), TextureName);
-    
-    UTexture2D* Texture360 = UComfyUIBlueprintLibrary::ImportImageAsAsset(ImagePath, TextureAssetPath);
-    
-    if (!Texture360)
-    {
-        UpdateStatus(TEXT("Error: Failed to import 360° texture"));
-        bIs360Generation = false;
-        return;
-    }
-    
-    /*// Configure texture for skylight use
-    Texture360->CompressionSettings = TC_HDR;
-    Texture360->SRGB = false;
-    Texture360->LODGroup = TEXTUREGROUP_Skybox;
-    Texture360->UpdateResource();*/
-    
-    Texture360->SetForceMipLevelsToBeResident(30.0f);
-    Texture360->WaitForStreaming();
-    
-    Texture360->SRGB = true;
-    Texture360->UpdateResource();
-    FlushRenderingCommands();
-    
-    UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Imported 360° texture: %s"), *TextureAssetPath);
-    
-    // Apply to SkyLight
-    Apply360ToSkyLight(Texture360);
-    
-    bIs360Generation = false;
-}
-
-void SComfyUIPanel::Apply360ToSkyLight(UTexture2D* Texture360)
-{
-    if (!GEditor || !GEditor->GetEditorWorldContext().World())
-    {
-        UpdateStatus(TEXT("Error: No editor world available"));
-        return;
-    }
-    
-    UWorld* World = GEditor->GetEditorWorldContext().World();
-    
-    // CLEANUP: Remove any existing AI-generated sky spheres
-    TArray<AActor*> ActorsToDestroy;
-    for (TActorIterator<AStaticMeshActor> It(World); It; ++It)
-    {
-        if (It->GetActorLabel().Contains(TEXT("AI_360_SkySphere")))
-        {
-            ActorsToDestroy.Add(*It);
-        }
-    }
-    
-    for (AActor* Actor : ActorsToDestroy)
-    {
-        World->DestroyActor(Actor);
-        UE_LOG(LogTemp, Log, TEXT("ComfyUI: Removed old sky sphere"));
-    }
-    
-    // Create a large inverted sphere with our 360° texture
-    AStaticMeshActor* SkySphere = World->SpawnActor<AStaticMeshActor>();
-    
-    UStaticMesh* SphereMesh = LoadObject<UStaticMesh>(nullptr, 
-        TEXT("/Engine/BasicShapes/Sphere.Sphere"));
-    
-    if (SkySphere && SphereMesh)
-    {
-        SkySphere->GetStaticMeshComponent()->SetStaticMesh(SphereMesh);
-        SkySphere->SetActorLabel(TEXT("AI_360_SkySphere"));
-        
-        // Make it huge and inverted
-        SkySphere->SetActorScale3D(FVector(300.0f, 300.0f, 300.0f));
-        
-        // Apply material with 360° texture
-        if (BaseMaterial)
-        {
-            UMaterialInstanceDynamic* SkyMat = UMaterialInstanceDynamic::Create(BaseMaterial, SkySphere);
-    
-            UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Texture360 valid: %d, name: %s, size: %dx%d"), 
-                Texture360 != nullptr,
-                *Texture360->GetName(),
-                Texture360->GetSizeX(),
-                Texture360->GetSizeY());
-    
-            SkyMat->SetTextureParameterValue(TEXT("BaseColorTexture"), Texture360);
-            SkySphere->GetStaticMeshComponent()->SetMaterial(0, SkyMat);
-            SkySphere->GetStaticMeshComponent()->SetCastShadow(false);
-    
-            // Log what parameter names the material actually has
-            TArray<FMaterialParameterInfo> ParamInfos;
-            TArray<FGuid> ParamGuids;
-            SkyMat->GetAllTextureParameterInfo(ParamInfos, ParamGuids);
-            for (const auto& Info : ParamInfos)
-            {
-                UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Material has texture param: '%s'"), *Info.Name.ToString());
-            }
-        }
-        
-        UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Created 360° sky sphere"));
-    }
-    
-    // Find or create SkyLight
-    ASkyLight* SkyLight = nullptr;
-    for (TActorIterator<ASkyLight> It(World); It; ++It)
-    {
-        SkyLight = *It;
-        break;
-    }
-    
-    if (!SkyLight)
-    {
-        SkyLight = World->SpawnActor<ASkyLight>();
-        SkyLight->SetActorLabel(TEXT("AI_Generated_SkyLight"));
-        UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Created new SkyLight"));
-    }
-    
-    if (SkyLight && SkyLight->GetLightComponent())
-    {
-        USkyLightComponent* SkyLightComp = SkyLight->GetLightComponent();
-        
-        // Configure SkyLight to capture the scene
-        SkyLightComp->SourceType = ESkyLightSourceType::SLS_CapturedScene;
-        SkyLightComp->Intensity = 2.0f;
-        SkyLightComp->Mobility = EComponentMobility::Movable;
-        
-        // Capture
-        SkyLightComp->MarkRenderStateDirty();
-        SkyLightComp->RecaptureSky();
-        
-        UpdateStatus(TEXT("360° applied to scene lighting!"));
-        UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Applied 360° to SkyLight"));
-    }
-    else
-    {
-        UpdateStatus(TEXT("Error: Could not configure SkyLight"));
-    }
-}
+// ============================================================================
+// Destructor
+// ============================================================================
 
 SComfyUIPanel::~SComfyUIPanel()
 {
-    // Clean up timer
     if (GEditor && ConnectionTimerHandle.IsValid())
-    {
         GEditor->GetTimerManager()->ClearTimer(ConnectionTimerHandle);
-    }
-    
-    // Remove texture from root to allow garbage collection
+
     if (ImageBrush.IsValid() && ImageBrush->GetResourceObject())
-    {
         if (UTexture2D* OldTexture = Cast<UTexture2D>(ImageBrush->GetResourceObject()))
-        {
             OldTexture->RemoveFromRoot();
-        }
-    }
 }
 
 #undef LOCTEXT_NAMESPACE
