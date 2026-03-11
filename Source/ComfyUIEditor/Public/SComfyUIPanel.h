@@ -48,8 +48,8 @@ private:
     // -------------------------------------------------------------------------
     // UI State
     // -------------------------------------------------------------------------
-    FString PromptText = TEXT("Beautiful tropical beach, big open foreground with tire tracks and puddles");
-    FString NegativePromptText = TEXT("cartoon, anime, low quality, blurry, distorted, unrealistic, people, vehicles");
+    FString PromptText = TEXT("Beautiful Scandinavian forest, big open foreground with tire tracks and puddles");
+    FString NegativePromptText = TEXT("cartoon, low quality, blurry, distorted, unrealistic, people, vehicles");
     FString StatusText;
     bool bIsComfyReady = false;
 
@@ -80,6 +80,7 @@ private:
     // Img2Img input — set via file picker, falls back to preview image
     FString Img2ImgInputPath;
     FString Img2ImgPromptText = TEXT("Edit the image...");
+    //float Img2ImgCreativity = 2.0f;
 
     // Connection polling
     int32 ConnectionAttempts = 0;

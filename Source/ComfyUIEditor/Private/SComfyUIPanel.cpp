@@ -25,6 +25,7 @@
 #include "EngineUtils.h"
 #include "IDesktopPlatform.h"
 #include "DesktopPlatformModule.h"
+#include "Widgets/Input/SSlider.h"
 
 #define LOCTEXT_NAMESPACE "SComfyUIPanel"
 
@@ -402,12 +403,12 @@ void SComfyUIPanel::SubmitWorkflow(const FComfyWorkflowParams& Params)
 
                     FComfyUIWorkflowCompleteDelegateNative CompleteDelegate;
                     CompleteDelegate.BindLambda(
-                        [CapturedWeakThis, CapturedParams](bool bSuccess, const FString& InPromptId)
+                        [CapturedWeakThis, CapturedParams, PromptId](bool bSuccess, const FString& InPromptId)
                         {
                             TSharedPtr<SComfyUIPanel> InnerPanel = CapturedWeakThis.Pin();
                             if (InnerPanel.IsValid())
                             {
-                                InnerPanel->OnWorkflowComplete(bSuccess, InPromptId, CapturedParams);
+                                InnerPanel->OnWorkflowComplete(bSuccess, PromptId, CapturedParams);
                             }
                         });
 
@@ -433,43 +434,98 @@ void SComfyUIPanel::OnWorkflowComplete(bool bSuccess, const FString& PromptId, F
     UpdateStatus(TEXT("Loading output image..."));
 
     TWeakPtr<SComfyUIPanel> CapturedWeakThis = WeakThis;
-
+    
+    const UComfyUISettings* Settings = GetDefault<UComfyUISettings>();
+    FString BaseUrl = Settings ? Settings->BaseUrl : TEXT("http://127.0.0.1:8188");
+    
     if (GEditor)
     {
         FTimerHandle DelayTimer;
         GEditor->GetTimerManager()->SetTimer(
             DelayTimer,
-            [CapturedWeakThis, Params]()
+            [CapturedWeakThis, Params, BaseUrl, PromptId]()
             {
                 TSharedPtr<SComfyUIPanel> Panel = CapturedWeakThis.Pin();
                 if (!Panel.IsValid()) return;
 
-                FString ImagePath = UComfyUIBlueprintLibrary::GetLatestOutputImage(Params.OutputPrefix);
-                if (ImagePath.IsEmpty())
-                {
-                    Panel->UpdateStatus(FString::Printf(
-                        TEXT("Error: No output image found with prefix '%s'"), *Params.OutputPrefix));
-                    return;
-                }
+                TSharedRef<IHttpRequest, ESPMode::ThreadSafe> HistoryRequest = FHttpModule::Get().CreateRequest();
+                HistoryRequest->SetURL(BaseUrl + TEXT("/history/") + PromptId);
+                HistoryRequest->SetVerb(TEXT("GET"));
+                HistoryRequest->OnProcessRequestComplete().BindLambda(
+                    [CapturedWeakThis, Params, PromptId](FHttpRequestPtr, FHttpResponsePtr Response, bool bSucceeded)
+                    {
+                        TSharedPtr<SComfyUIPanel> Panel = CapturedWeakThis.Pin();
+                        if (!Panel.IsValid()) return;
 
-                UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Found output image: %s"), *ImagePath);
+                        if (!bSucceeded || !Response.IsValid()) 
+                        {
+                            Panel->UpdateStatus(TEXT("Error: Could not fetch history"));
+                            return;
+                        }
 
-                if (Params.bUpdatePreview)
-                {
-                    if (Params.bTargetPreviewB)
-                        Panel->PreviewImagePathB = ImagePath;
-                    else
-                        Panel->PreviewImagePathA = ImagePath;
-                    
-                    Panel->LoadAndDisplayImage(ImagePath, Params.bTargetPreviewB);
-                }
+                        TSharedPtr<FJsonObject> History;
+                        const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Response->GetContentAsString());
+                        if (!FJsonSerializer::Deserialize(Reader, History) || !History.IsValid())
+                        {
+                            Panel->UpdateStatus(TEXT("Error: Could not parse history"));
+                            return;
+                        }
 
-                if (Params.bAutoImport)
-                {
-                    Panel->ImportImageToProject(ImagePath, Params.OutputPrefix);
-                }
+                        // Find the first image output in this prompt's history
+                        FString ImagePath;
+                        const TSharedPtr<FJsonObject>* PromptHistory;
+                        if (History->TryGetObjectField(PromptId, PromptHistory))
+                        {
+                            const TSharedPtr<FJsonObject>* Outputs;
+                            if ((*PromptHistory)->TryGetObjectField(TEXT("outputs"), Outputs))
+                            {
+                                for (auto& NodePair : (*Outputs)->Values)
+                                {
+                                    const TSharedPtr<FJsonObject>* NodeOutput;
+                                    if (NodePair.Value->TryGetObject(NodeOutput))
+                                    {
+                                        const TArray<TSharedPtr<FJsonValue>>* Images;
+                                        if ((*NodeOutput)->TryGetArrayField(TEXT("images"), Images) && Images->Num() > 0)
+                                        {
+                                            FString Filename = (*Images)[0]->AsObject()->GetStringField(TEXT("filename"));
+            
+                                            // Skip temp/preview files
+                                            if (Filename.Contains(TEXT("_temp_")))
+                                                continue;
 
-                Panel->UpdateStatus(Params.CompleteStatus);
+                                            ImagePath = FPaths::Combine(
+                                                UComfyUIBlueprintLibrary::GetComfyUIOutputFolder(), Filename);
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if (ImagePath.IsEmpty())
+                        {
+                            Panel->UpdateStatus(TEXT("Error: No output image found in history"));
+                            return;
+                        }
+
+                        if (Params.bUpdatePreview)
+                        {
+                            if (Params.bTargetPreviewB)
+                                Panel->PreviewImagePathB = ImagePath;
+                            else
+                                Panel->PreviewImagePathA = ImagePath;
+
+                            Panel->LoadAndDisplayImage(ImagePath, Params.bTargetPreviewB);
+                        }
+
+                        if (Params.bAutoImport)
+                        {
+                            Panel->ImportImageToProject(ImagePath, Params.OutputPrefix);
+                        }
+
+                        Panel->UpdateStatus(Params.CompleteStatus);
+                    });
+                HistoryRequest->ProcessRequest();
             },
             0.5f,
             false
@@ -516,19 +572,20 @@ void SComfyUIPanel::StartImg2Img()
         return;
     }
 
-    // Use explicitly picked file, fall back to current preview
-    FString SourcePath = Img2ImgInputPath.IsEmpty() ? PreviewImagePathA : Img2ImgInputPath;
+    
+    FString SourcePath = PreviewImagePathA;
     FString Filename = FPaths::GetCleanFilename(SourcePath);
+    
+    FString OutputFolder = UComfyUIBlueprintLibrary::GetComfyUIOutputFolder();
+    FString SourceDir = FPaths::GetPath(SourcePath);
+    bool bIsFromOutput = FPaths::IsSamePath(SourceDir, OutputFolder);
 
-    // If the source is from the output folder, use [output] suffix for LoadImageOutput node
-    // If it was picked from elsewhere it will have been copied to input folder
-    bool bIsFromOutput = Img2ImgInputPath.IsEmpty(); // preview images are always in output
     FString NodeImageValue = bIsFromOutput
         ? Filename + TEXT(" [output]")
-        : Filename;
+        : Filename; // browsed images are in the input folder
 
-    // Patch node 32 (LoadImageOutput) or node 25 (LoadImage) depending on source
-    FString ImageNodeId = bIsFromOutput ? TEXT("32") : TEXT("32"); // both use 32 in current workflow
+    
+    FString ImageNodeId = TEXT("32");
     if (TSharedPtr<FJsonObject> ImageNode = WorkflowObj->GetObjectField(ImageNodeId))
     {
         ImageNode->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("image"), NodeImageValue);
@@ -537,7 +594,13 @@ void SComfyUIPanel::StartImg2Img()
     // Patch prompt - node 2
     if (TSharedPtr<FJsonObject> PromptNode = WorkflowObj->GetObjectField(TEXT("2")))
     {
-        PromptNode->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("text"), PromptText);
+        PromptNode->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("text"), Img2ImgPromptText);
+    }
+    
+    if (TSharedPtr<FJsonObject> SeedNode = WorkflowObj->GetObjectField(TEXT("16")))
+    {
+        int32 NewSeed = FMath::Abs((int32)(FDateTime::Now().GetTicks() % MAX_int32));
+        SeedNode->GetObjectField(TEXT("inputs"))->SetNumberField(TEXT("seed"), NewSeed);
     }
 
     FComfyWorkflowParams WorkflowParams;
@@ -555,7 +618,13 @@ void SComfyUIPanel::StartImg2Img()
 void SComfyUIPanel::Start360Generation(const FString& SourcePath)
 {
     FString Filename = FPaths::GetCleanFilename(SourcePath);
-    FString OutputReference = Filename + TEXT(" [output]");
+    FString OutputFolder = UComfyUIBlueprintLibrary::GetComfyUIOutputFolder();
+    FString SourceDir = FPaths::GetPath(SourcePath);
+    bool bIsFromOutput = FPaths::IsSamePath(SourceDir, OutputFolder);
+    
+    FString NodeImageValue = bIsFromOutput
+        ? Filename + TEXT(" [output]")
+        : Filename; // browsed images were copied to input folder
 
     TSharedPtr<FJsonObject> WorkflowObj;
     if (!LoadWorkflowFromFile(TEXT("ComfyUI_windows_portable/ComfyUI/user/default/workflows/360_Kontext-Small-API.json"), WorkflowObj))
@@ -565,10 +634,10 @@ void SComfyUIPanel::Start360Generation(const FString& SourcePath)
     }
 
     if (TSharedPtr<FJsonObject> Node147 = WorkflowObj->GetObjectField(TEXT("147")))
-        Node147->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("image"), OutputReference);
+        Node147->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("image"), NodeImageValue);
 
     if (TSharedPtr<FJsonObject> Node142 = WorkflowObj->GetObjectField(TEXT("142")))
-        Node142->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("image"), OutputReference);
+        Node142->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("image"), NodeImageValue);
 
     FComfyWorkflowParams WorkflowParams;
     WorkflowParams.WorkflowJson   = SerializeWorkflow(WorkflowObj);
