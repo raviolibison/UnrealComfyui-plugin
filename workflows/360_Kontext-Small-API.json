@@ -27,8 +27,8 @@
   },
   "37": {
     "inputs": {
-      "unet_name": "flux1-kontext-dev.safetensors",
-      "weight_dtype": "default"
+      "unet_name": "flux1-kontext-dev-fp8-e4m3fn.safetensors",
+      "weight_dtype": "fp8_e4m3fn"
     },
     "class_type": "UNETLoader",
     "_meta": {
@@ -38,7 +38,7 @@
   "38": {
     "inputs": {
       "clip_name1": "clip_l.safetensors",
-      "clip_name2": "t5xxl_fp8_e4m3fn_scaled.safetensors",
+      "clip_name2": "t5xxl_fp8_e4m3fn.safetensors",
       "type": "flux",
       "device": "default"
     },
@@ -49,7 +49,7 @@
   },
   "39": {
     "inputs": {
-      "vae_name": "flux_dev_vae.safetensors"
+      "vae_name": "ae.safetensors"
     },
     "class_type": "VAELoader",
     "_meta": {
@@ -86,7 +86,7 @@
   },
   "142": {
     "inputs": {
-      "image": "UE_Editor_00054_.png [output]",
+      "image": "UE_Editor_00062_.png [output]",
       "refresh": "refresh"
     },
     "class_type": "LoadImageOutput",
@@ -243,7 +243,7 @@
   "215": {
     "inputs": {
       "lora_name": "HDR360.safetensors",
-      "strength_model": 1.0000000000000002,
+      "strength_model": 1,
       "model": [
         "191",
         0
@@ -668,19 +668,6 @@
     "class_type": "PreviewImage",
     "_meta": {
       "title": "Preview Image"
-    }
-  },
-  "294": {
-    "inputs": {
-      "text_0": "The image shows a beach with sand and palm trees in the background. In the foreground, there is a body of water with a boat in the distance. The sky is filled with clouds and there are sheds and other objects scattered around the beach. At the bottom of the image, there are footprints in the sand.",
-      "text": [
-        "270",
-        2
-      ]
-    },
-    "class_type": "ShowText|pysssss",
-    "_meta": {
-      "title": "Show Text 🐍"
     }
   },
   "295": {

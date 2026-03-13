@@ -978,7 +978,7 @@ void SComfyUIPanel::DownloadImageFromComfyUI(const FString& Filename, TFunction<
     const UComfyUISettings* Settings = GetDefault<UComfyUISettings>();
     FString BaseUrl = Settings ? Settings->BaseUrl : TEXT("http://127.0.0.1:8188");
 
-    FString Url = BaseUrl + TEXT("/view?filename=") + FPlatformHttp::UrlEncode(Filename) + TEXT("&type=output");
+    FString Url = BaseUrl + TEXT("/view?filename=") + Filename + TEXT("&type=output");
 
     TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
     Request->SetURL(Url);
