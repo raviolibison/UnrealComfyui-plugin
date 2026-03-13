@@ -25,7 +25,6 @@
 #include "EngineUtils.h"
 #include "IDesktopPlatform.h"
 #include "DesktopPlatformModule.h"
-#include "Widgets/Input/SSlider.h"
 
 #define LOCTEXT_NAMESPACE "SComfyUIPanel"
 
@@ -51,10 +50,9 @@ void SComfyUIPanel::Construct(const FArguments& InArgs)
     HeightOptions.Add(MakeShared<FString>(TEXT("Custom")));
     SelectedHeight = HeightOptions[2];
 
-    StatusText = TEXT("Offline");
+    StatusText = TEXT("Connecting...");
     WeakThis = SharedThis(this);
 
-    ConnectionAttempts = 0;
     PollComfyConnection();
 
     ChildSlot
@@ -64,28 +62,26 @@ void SComfyUIPanel::Construct(const FArguments& InArgs)
         [
             SNew(SVerticalBox)
 
-            // --- Server Control ---
+            // --- Connection Status ---
             + SVerticalBox::Slot().AutoHeight().Padding(0,0,0,15)
             [
                 SNew(SHorizontalBox)
-                + SHorizontalBox::Slot().AutoWidth()
-                [
-                    SNew(SButton)
-                    .Text_Lambda([this]() {
-                        return bIsComfyReady
-                            ? LOCTEXT("ServerRunning", "ComfyUI Running")
-                            : LOCTEXT("StartServer", "Start ComfyUI");
-                    })
-                    .OnClicked(this, &SComfyUIPanel::OnStartComfyClicked)
-                    .IsEnabled_Lambda([this](){ return !bIsComfyReady; })
-                ]
-                + SHorizontalBox::Slot().AutoWidth().Padding(10,0,0,0).VAlign(VAlign_Center)
+                + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
                 [
                     SNew(STextBlock)
                     .Text(FText::FromString(TEXT("\u25CF")))
                     .Font(FCoreStyle::GetDefaultFontStyle("Regular", 24))
                     .ColorAndOpacity_Lambda([this]() {
                         return bIsComfyReady ? FLinearColor::Green : FLinearColor::Red;
+                    })
+                ]
+                + SHorizontalBox::Slot().AutoWidth().Padding(8,0,0,0).VAlign(VAlign_Center)
+                [
+                    SNew(STextBlock)
+                    .Text_Lambda([this]() {
+                        return bIsComfyReady
+                            ? LOCTEXT("ServerReady", "ComfyUI Connected")
+                            : LOCTEXT("ServerOffline", "ComfyUI Offline");
                     })
                 ]
             ]
@@ -228,7 +224,7 @@ void SComfyUIPanel::Construct(const FArguments& InArgs)
                 + SHorizontalBox::Slot().AutoWidth().Padding(10,0,0,0)
                 [
                     SNew(SButton)
-                    .Text(LOCTEXT("360AButton", "Generate 360° HDRI"))
+                    .Text(LOCTEXT("360AButton", "Generate 360\u00b0 HDRI"))
                     .IsEnabled_Lambda([this]() { return bIsComfyReady && !PreviewImagePathA.IsEmpty(); })
                     .OnClicked_Lambda([this]() { return OnGenerate360Clicked(PreviewImagePathA); })
                 ]
@@ -303,7 +299,7 @@ void SComfyUIPanel::Construct(const FArguments& InArgs)
                 + SHorizontalBox::Slot().AutoWidth().Padding(10,0,0,0)
                 [
                     SNew(SButton)
-                    .Text(LOCTEXT("360BButton", "Generate 360° HDRI"))
+                    .Text(LOCTEXT("360BButton", "Generate 360\u00b0 HDRI"))
                     .IsEnabled_Lambda([this]() { return bIsComfyReady && !PreviewImagePathB.IsEmpty(); })
                     .OnClicked_Lambda([this]() { return OnGenerate360Clicked(PreviewImagePathB); })
                 ]
@@ -319,7 +315,8 @@ void SComfyUIPanel::Construct(const FArguments& InArgs)
                     if (StatusText.Contains("Error") || StatusText.Contains("Offline"))
                         return FLinearColor::Red;
                     if (StatusText.Contains("Generating") || StatusText.Contains("Waiting")
-                        || StatusText.Contains("Launching") || StatusText.Contains("Running"))
+                        || StatusText.Contains("Uploading") || StatusText.Contains("Running")
+                        || StatusText.Contains("Downloading"))
                         return FLinearColor::Yellow;
                     return FLinearColor::White;
                 })
@@ -407,9 +404,7 @@ void SComfyUIPanel::SubmitWorkflow(const FComfyWorkflowParams& Params)
                         {
                             TSharedPtr<SComfyUIPanel> InnerPanel = CapturedWeakThis.Pin();
                             if (InnerPanel.IsValid())
-                            {
                                 InnerPanel->OnWorkflowComplete(bSuccess, PromptId, CapturedParams);
-                            }
                         });
 
                     WSHandler->WatchPrompt(PromptId, CompleteDelegate);
@@ -422,8 +417,8 @@ void SComfyUIPanel::SubmitWorkflow(const FComfyWorkflowParams& Params)
 
 void SComfyUIPanel::OnWorkflowComplete(bool bSuccess, const FString& PromptId, FComfyWorkflowParams Params)
 {
-    UE_LOG(LogTemp, Warning, TEXT("ComfyUI: OnWorkflowComplete - Success: %d, PromptId: %s, Prefix: %s"),
-        bSuccess, *PromptId, *Params.OutputPrefix);
+    UE_LOG(LogTemp, Warning, TEXT("ComfyUI: OnWorkflowComplete - Success: %d, PromptId: %s"),
+        bSuccess, *PromptId);
 
     if (!bSuccess)
     {
@@ -431,13 +426,13 @@ void SComfyUIPanel::OnWorkflowComplete(bool bSuccess, const FString& PromptId, F
         return;
     }
 
-    UpdateStatus(TEXT("Loading output image..."));
+    UpdateStatus(TEXT("Fetching result..."));
 
-    TWeakPtr<SComfyUIPanel> CapturedWeakThis = WeakThis;
-    
     const UComfyUISettings* Settings = GetDefault<UComfyUISettings>();
     FString BaseUrl = Settings ? Settings->BaseUrl : TEXT("http://127.0.0.1:8188");
-    
+
+    TWeakPtr<SComfyUIPanel> CapturedWeakThis = WeakThis;
+
     if (GEditor)
     {
         FTimerHandle DelayTimer;
@@ -448,16 +443,17 @@ void SComfyUIPanel::OnWorkflowComplete(bool bSuccess, const FString& PromptId, F
                 TSharedPtr<SComfyUIPanel> Panel = CapturedWeakThis.Pin();
                 if (!Panel.IsValid()) return;
 
+                // Step 1: fetch /history to get the output filename
                 TSharedRef<IHttpRequest, ESPMode::ThreadSafe> HistoryRequest = FHttpModule::Get().CreateRequest();
                 HistoryRequest->SetURL(BaseUrl + TEXT("/history/") + PromptId);
                 HistoryRequest->SetVerb(TEXT("GET"));
                 HistoryRequest->OnProcessRequestComplete().BindLambda(
-                    [CapturedWeakThis, Params, PromptId](FHttpRequestPtr, FHttpResponsePtr Response, bool bSucceeded)
+                    [CapturedWeakThis, Params, BaseUrl, PromptId](FHttpRequestPtr, FHttpResponsePtr Response, bool bSucceeded)
                     {
                         TSharedPtr<SComfyUIPanel> Panel = CapturedWeakThis.Pin();
                         if (!Panel.IsValid()) return;
 
-                        if (!bSucceeded || !Response.IsValid()) 
+                        if (!bSucceeded || !Response.IsValid())
                         {
                             Panel->UpdateStatus(TEXT("Error: Could not fetch history"));
                             return;
@@ -471,8 +467,8 @@ void SComfyUIPanel::OnWorkflowComplete(bool bSuccess, const FString& PromptId, F
                             return;
                         }
 
-                        // Find the first image output in this prompt's history
-                        FString ImagePath;
+                        // Find first non-temp image in outputs
+                        FString OutputFilename;
                         const TSharedPtr<FJsonObject>* PromptHistory;
                         if (History->TryGetObjectField(PromptId, PromptHistory))
                         {
@@ -488,42 +484,58 @@ void SComfyUIPanel::OnWorkflowComplete(bool bSuccess, const FString& PromptId, F
                                         if ((*NodeOutput)->TryGetArrayField(TEXT("images"), Images) && Images->Num() > 0)
                                         {
                                             FString Filename = (*Images)[0]->AsObject()->GetStringField(TEXT("filename"));
-            
-                                            // Skip temp/preview files
-                                            if (Filename.Contains(TEXT("_temp_")))
-                                                continue;
-
-                                            ImagePath = FPaths::Combine(
-                                                UComfyUIBlueprintLibrary::GetComfyUIOutputFolder(), Filename);
-                                            break;
+                                            if (!Filename.Contains(TEXT("_temp_")))
+                                            {
+                                                OutputFilename = Filename;
+                                                break;
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
 
-                        if (ImagePath.IsEmpty())
+                        if (OutputFilename.IsEmpty())
                         {
                             Panel->UpdateStatus(TEXT("Error: No output image found in history"));
                             return;
                         }
 
-                        if (Params.bUpdatePreview)
-                        {
-                            if (Params.bTargetPreviewB)
-                                Panel->PreviewImagePathB = ImagePath;
-                            else
-                                Panel->PreviewImagePathA = ImagePath;
+                        UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Output filename: %s"), *OutputFilename);
 
-                            Panel->LoadAndDisplayImage(ImagePath, Params.bTargetPreviewB);
-                        }
+                        // Step 2: download the image via /view
+                        Panel->UpdateStatus(TEXT("Downloading result..."));
+                        Panel->DownloadImageFromComfyUI(OutputFilename,
+                            [CapturedWeakThis, Params](bool bDownloadSuccess, const FString& LocalPath)
+                            {
+                                TSharedPtr<SComfyUIPanel> Panel = CapturedWeakThis.Pin();
+                                if (!Panel.IsValid()) return;
 
-                        if (Params.bAutoImport)
-                        {
-                            Panel->ImportImageToProject(ImagePath, Params.OutputPrefix);
-                        }
+                                if (!bDownloadSuccess || LocalPath.IsEmpty())
+                                {
+                                    Panel->UpdateStatus(TEXT("Error: Failed to download result image"));
+                                    return;
+                                }
 
-                        Panel->UpdateStatus(Params.CompleteStatus);
+                                UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Downloaded to: %s"), *LocalPath);
+
+                                if (Params.bUpdatePreview)
+                                {
+                                    if (Params.bTargetPreviewB)
+                                        Panel->PreviewImagePathB = LocalPath;
+                                    else
+                                        Panel->PreviewImagePathA = LocalPath;
+
+                                    Panel->LoadAndDisplayImage(LocalPath, Params.bTargetPreviewB);
+                                }
+
+                                if (Params.bAutoImport)
+                                {
+                                    Panel->ImportImageToProject(LocalPath, Params.OutputPrefix);
+                                }
+
+                                Panel->UpdateStatus(Params.CompleteStatus);
+                            });
                     });
                 HistoryRequest->ProcessRequest();
             },
@@ -551,12 +563,12 @@ void SComfyUIPanel::StartGeneration()
     FluxParams.Seed           = FMath::Abs((int32)(FDateTime::Now().GetTicks() % MAX_int32));
 
     FComfyWorkflowParams WorkflowParams;
-    WorkflowParams.WorkflowJson   = UComfyUIBlueprintLibrary::BuildFlux2WorkflowJson(FluxParams);
-    WorkflowParams.OutputPrefix   = CurrentFilenamePrefix;
-    WorkflowParams.RunningStatus  = TEXT("Generating image...");
-    WorkflowParams.CompleteStatus = TEXT("Done! Import to project or run Img2Img.");
-    WorkflowParams.bUpdatePreview = true;
-    WorkflowParams.bAutoImport    = false;
+    WorkflowParams.WorkflowJson    = UComfyUIBlueprintLibrary::BuildFlux2WorkflowJson(FluxParams);
+    WorkflowParams.OutputPrefix    = CurrentFilenamePrefix;
+    WorkflowParams.RunningStatus   = TEXT("Generating image...");
+    WorkflowParams.CompleteStatus  = TEXT("Done! Import to project or run Img2Img.");
+    WorkflowParams.bUpdatePreview  = true;
+    WorkflowParams.bAutoImport     = false;
     WorkflowParams.bTargetPreviewB = false;
 
     SubmitWorkflow(WorkflowParams);
@@ -564,39 +576,30 @@ void SComfyUIPanel::StartGeneration()
 
 void SComfyUIPanel::StartImg2Img()
 {
-    
     TSharedPtr<FJsonObject> WorkflowObj;
-    if (!LoadWorkflowFromFile(TEXT("ComfyUI_windows_portable/ComfyUI/user/default/workflows/img2img-API.json"), WorkflowObj))
+    if (!LoadWorkflowFromFile(TEXT("workflows/img2img-API.json"), WorkflowObj))
     {
         UpdateStatus(TEXT("Error: img2img workflow file not found"));
         return;
     }
 
-    
-    FString SourcePath = PreviewImagePathA;
-    FString Filename = FPaths::GetCleanFilename(SourcePath);
-    
-    FString OutputFolder = UComfyUIBlueprintLibrary::GetComfyUIOutputFolder();
-    FString SourceDir = FPaths::GetPath(SourcePath);
-    bool bIsFromOutput = FPaths::IsSamePath(SourceDir, OutputFolder);
+    // PreviewImagePathA is always the source — either a downloaded result or a browsed+uploaded image
+    FString Filename = FPaths::GetCleanFilename(PreviewImagePathA);
 
-    FString NodeImageValue = bIsFromOutput
+    // Images uploaded via /upload/image land in ComfyUI's input folder
+    // Images that came from /view (generated outputs) need [output] suffix
+    // We track this by whether the local path is in our temp folder
+    bool bIsDownloadedOutput = PreviewImagePathA.StartsWith(GetLocalTempFolder());
+    FString NodeImageValue = bIsDownloadedOutput
         ? Filename + TEXT(" [output]")
-        : Filename; // browsed images are in the input folder
+        : Filename;
 
-    
-    FString ImageNodeId = TEXT("32");
-    if (TSharedPtr<FJsonObject> ImageNode = WorkflowObj->GetObjectField(ImageNodeId))
-    {
+    if (TSharedPtr<FJsonObject> ImageNode = WorkflowObj->GetObjectField(TEXT("32")))
         ImageNode->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("image"), NodeImageValue);
-    }
 
-    // Patch prompt - node 2
     if (TSharedPtr<FJsonObject> PromptNode = WorkflowObj->GetObjectField(TEXT("2")))
-    {
         PromptNode->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("text"), Img2ImgPromptText);
-    }
-    
+
     if (TSharedPtr<FJsonObject> SeedNode = WorkflowObj->GetObjectField(TEXT("16")))
     {
         int32 NewSeed = FMath::Abs((int32)(FDateTime::Now().GetTicks() % MAX_int32));
@@ -604,12 +607,12 @@ void SComfyUIPanel::StartImg2Img()
     }
 
     FComfyWorkflowParams WorkflowParams;
-    WorkflowParams.WorkflowJson   = SerializeWorkflow(WorkflowObj);
-    WorkflowParams.OutputPrefix   = TEXT("Flux2-Klein-Edit");
-    WorkflowParams.RunningStatus  = TEXT("Running img2img...");
-    WorkflowParams.CompleteStatus = TEXT("Img2Img complete! Import to project or run again.");
-    WorkflowParams.bUpdatePreview = true;
-    WorkflowParams.bAutoImport    = false;
+    WorkflowParams.WorkflowJson    = SerializeWorkflow(WorkflowObj);
+    WorkflowParams.OutputPrefix    = TEXT("Flux2-Klein-Edit");
+    WorkflowParams.RunningStatus   = TEXT("Running img2img...");
+    WorkflowParams.CompleteStatus  = TEXT("Img2Img complete! Import to project or run again.");
+    WorkflowParams.bUpdatePreview  = true;
+    WorkflowParams.bAutoImport     = false;
     WorkflowParams.bTargetPreviewB = true;
 
     SubmitWorkflow(WorkflowParams);
@@ -617,21 +620,18 @@ void SComfyUIPanel::StartImg2Img()
 
 void SComfyUIPanel::Start360Generation(const FString& SourcePath)
 {
-    FString Filename = FPaths::GetCleanFilename(SourcePath);
-    FString OutputFolder = UComfyUIBlueprintLibrary::GetComfyUIOutputFolder();
-    FString SourceDir = FPaths::GetPath(SourcePath);
-    bool bIsFromOutput = FPaths::IsSamePath(SourceDir, OutputFolder);
-    
-    FString NodeImageValue = bIsFromOutput
-        ? Filename + TEXT(" [output]")
-        : Filename; // browsed images were copied to input folder
-
     TSharedPtr<FJsonObject> WorkflowObj;
-    if (!LoadWorkflowFromFile(TEXT("ComfyUI_windows_portable/ComfyUI/user/default/workflows/360_Kontext-Small-API.json"), WorkflowObj))
+    if (!LoadWorkflowFromFile(TEXT("workflows/360_Kontext-Small-API.json"), WorkflowObj))
     {
         UpdateStatus(TEXT("Error: 360 workflow file not found"));
         return;
     }
+
+    FString Filename = FPaths::GetCleanFilename(SourcePath);
+    bool bIsDownloadedOutput = SourcePath.StartsWith(GetLocalTempFolder());
+    FString NodeImageValue = bIsDownloadedOutput
+        ? Filename + TEXT(" [output]")
+        : Filename;
 
     if (TSharedPtr<FJsonObject> Node147 = WorkflowObj->GetObjectField(TEXT("147")))
         Node147->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("image"), NodeImageValue);
@@ -642,10 +642,10 @@ void SComfyUIPanel::Start360Generation(const FString& SourcePath)
     FComfyWorkflowParams WorkflowParams;
     WorkflowParams.WorkflowJson   = SerializeWorkflow(WorkflowObj);
     WorkflowParams.OutputPrefix   = TEXT("Kontext_Upscale");
-    WorkflowParams.RunningStatus  = TEXT("Generating 360° panorama...");
-    WorkflowParams.CompleteStatus = TEXT("360° HDRI generated and imported to project!");
+    WorkflowParams.RunningStatus  = TEXT("Generating 360\u00b0 panorama...");
+    WorkflowParams.CompleteStatus = TEXT("360\u00b0 HDRI generated and imported to project!");
     WorkflowParams.bUpdatePreview = false;
-    WorkflowParams.bAutoImport    = true; // always auto-import 360 results
+    WorkflowParams.bAutoImport    = true;
 
     SubmitWorkflow(WorkflowParams);
 }
@@ -656,7 +656,6 @@ void SComfyUIPanel::Start360Generation(const FString& SourcePath)
 
 FReply SComfyUIPanel::OnGenerateClicked()
 {
-    
     UpdateStatus(TEXT("Submitting workflow..."));
     StartGeneration();
     return FReply::Handled();
@@ -671,7 +670,7 @@ FReply SComfyUIPanel::OnImg2ImgBrowseClicked()
     bool bOpened = DesktopPlatform->OpenFileDialog(
         FSlateApplication::Get().FindBestParentWindowHandleForDialogs(nullptr),
         TEXT("Select Input Image"),
-        FPaths::GetPath(PreviewImagePathA),
+        TEXT(""),
         TEXT(""),
         TEXT("Image Files (*.png;*.jpg;*.jpeg)|*.png;*.jpg;*.jpeg"),
         EFileDialogFlags::None,
@@ -681,28 +680,21 @@ FReply SComfyUIPanel::OnImg2ImgBrowseClicked()
     if (bOpened && OutFiles.Num() > 0)
     {
         FString SelectedFile = OutFiles[0];
-        FString Filename = FPaths::GetCleanFilename(SelectedFile);
-        FString InputFolder = GetComfyInputFolder();
+        UpdateStatus(TEXT("Uploading image to ComfyUI..."));
 
-        if (!InputFolder.IsEmpty())
-        {
-            FString DestPath = FPaths::Combine(InputFolder, Filename);
-            if (IFileManager::Get().Copy(*DestPath, *SelectedFile) == COPY_OK)
+        // Display immediately from local path for instant feedback
+        PreviewImagePathA = SelectedFile;
+        LoadAndDisplayImage(SelectedFile, false);
+
+        // Upload to ComfyUI in background — StartImg2Img will use the filename
+        UploadImageToComfyUI(SelectedFile,
+            [this](bool bSuccess, const FString& Filename)
             {
-                Img2ImgInputPath = SelectedFile;
-                PreviewImagePathA = SelectedFile;
-                LoadAndDisplayImage(SelectedFile, false);
-                UpdateStatus(FString::Printf(TEXT("Input loaded: %s"), *Filename));
-            }
-            else
-            {
-                UpdateStatus(TEXT("Error: Failed to copy image to ComfyUI input folder"));
-            }
-        }
-        else
-        {
-            UpdateStatus(TEXT("Error: Could not find ComfyUI input folder"));
-        }
+                if (bSuccess)
+                    UpdateStatus(FString::Printf(TEXT("Input ready: %s"), *Filename));
+                else
+                    UpdateStatus(TEXT("Error: Failed to upload image to ComfyUI"));
+            });
     }
 
     return FReply::Handled();
@@ -727,7 +719,29 @@ FReply SComfyUIPanel::OnGenerate360Clicked(FString SourcePath)
         UpdateStatus(TEXT("Error: No preview image available. Generate an image first."));
         return FReply::Handled();
     }
-    UpdateStatus(TEXT("Submitting 360° workflow..."));
+
+    // If source is a browsed (non-downloaded) image, upload it first
+    bool bIsDownloadedOutput = SourcePath.StartsWith(GetLocalTempFolder());
+    if (!bIsDownloadedOutput)
+    {
+        UpdateStatus(TEXT("Uploading image to ComfyUI..."));
+        UploadImageToComfyUI(SourcePath,
+            [this, SourcePath](bool bSuccess, const FString& Filename)
+            {
+                if (bSuccess)
+                {
+                    UpdateStatus(TEXT("Submitting 360\u00b0 workflow..."));
+                    Start360Generation(SourcePath);
+                }
+                else
+                {
+                    UpdateStatus(TEXT("Error: Failed to upload image"));
+                }
+            });
+        return FReply::Handled();
+    }
+
+    UpdateStatus(TEXT("Submitting 360\u00b0 workflow..."));
     Start360Generation(SourcePath);
     return FReply::Handled();
 }
@@ -739,7 +753,6 @@ FReply SComfyUIPanel::OnImportClicked(FString SourcePath)
         UpdateStatus(TEXT("Error: No preview image to import"));
         return FReply::Handled();
     }
-
     ImportImageToProject(SourcePath, TEXT("T_Generated"));
     return FReply::Handled();
 }
@@ -774,24 +787,6 @@ FReply SComfyUIPanel::OnApplyToComposureClicked(FString SourcePath)
     }
 
     ApplyTextureToComposurePlates(TextureToApply);
-    return FReply::Handled();
-}
-
-FReply SComfyUIPanel::OnStartComfyClicked()
-{
-    if (FComfyUIModule* Module = FModuleManager::GetModulePtr<FComfyUIModule>(TEXT("ComfyUI")))
-    {
-        if (Module->ForceStartPortable())
-        {
-            UpdateStatus(TEXT("Launching ComfyUI..."));
-            ConnectionAttempts = 1;
-            PollComfyConnection();
-        }
-        else
-        {
-            UpdateStatus(TEXT("Error: Failed to launch ComfyUI (Check logs/paths)"));
-        }
-    }
     return FReply::Handled();
 }
 
@@ -870,18 +865,18 @@ void SComfyUIPanel::ApplyTextureToComposurePlates(UTexture2D* Texture)
 }
 
 // ============================================================================
-// Server Control / Polling
+// Connection Polling
 // ============================================================================
 
 void SComfyUIPanel::PollComfyConnection()
 {
-    TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
     const UComfyUISettings* Settings = GetDefault<UComfyUISettings>();
     FString BaseUrl = Settings ? Settings->BaseUrl : TEXT("http://127.0.0.1:8188");
 
+    TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
     Request->SetURL(BaseUrl + TEXT("/system_stats"));
     Request->SetVerb(TEXT("GET"));
-    Request->SetTimeout(3.0f);
+    Request->SetTimeout(5.0f);
 
     Request->OnProcessRequestComplete().BindLambda(
         [this](FHttpRequestPtr, FHttpResponsePtr Response, bool bSucceeded)
@@ -894,27 +889,15 @@ void SComfyUIPanel::PollComfyConnection()
             }
 
             bIsComfyReady = false;
+            StatusText = TEXT("ComfyUI Offline");
 
-            if (ConnectionAttempts > 0 && ConnectionAttempts < 30)
+            // Retry every 5 seconds
+            if (GEditor)
             {
-                ConnectionAttempts++;
-                UpdateStatus(FString::Printf(TEXT("Waiting for ComfyUI... (%ds)"), ConnectionAttempts));
-                if (GEditor)
-                {
-                    GEditor->GetTimerManager()->SetTimer(
-                        ConnectionTimerHandle,
-                        FTimerDelegate::CreateRaw(this, &SComfyUIPanel::PollComfyConnection),
-                        1.0f, false);
-                }
-            }
-            else if (ConnectionAttempts >= 30)
-            {
-                UpdateStatus(TEXT("Error: Timed out connecting to ComfyUI"));
-                ConnectionAttempts = 0;
-            }
-            else
-            {
-                StatusText = TEXT("Server Offline");
+                GEditor->GetTimerManager()->SetTimer(
+                    ConnectionTimerHandle,
+                    FTimerDelegate::CreateRaw(this, &SComfyUIPanel::PollComfyConnection),
+                    5.0f, false);
             }
         });
 
@@ -922,30 +905,132 @@ void SComfyUIPanel::PollComfyConnection()
 }
 
 // ============================================================================
-// Helpers
+// Network Helpers
 // ============================================================================
 
-FString SComfyUIPanel::GetComfyInputFolder() const
+void SComfyUIPanel::UploadImageToComfyUI(const FString& LocalFilePath, TFunction<void(bool, const FString&)> OnComplete)
 {
-    if (const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("ComfyUI")))
+    TArray<uint8> FileData;
+    if (!FFileHelper::LoadFileToArray(FileData, *LocalFilePath))
     {
-        FString InputPath = FPaths::Combine(Plugin->GetBaseDir(),
-            TEXT("ComfyUI_windows_portable"), TEXT("ComfyUI"), TEXT("input"));
-        if (FPaths::DirectoryExists(InputPath))
-        {
-            return InputPath;
-        }
+        UE_LOG(LogTemp, Error, TEXT("ComfyUI: Failed to read file for upload: %s"), *LocalFilePath);
+        OnComplete(false, TEXT(""));
+        return;
     }
-    return TEXT("");
+
+    const UComfyUISettings* Settings = GetDefault<UComfyUISettings>();
+    FString BaseUrl = Settings ? Settings->BaseUrl : TEXT("http://127.0.0.1:8188");
+    FString Filename = FPaths::GetCleanFilename(LocalFilePath);
+
+    // Build multipart/form-data body
+    FString Boundary = TEXT("----ComfyUIBoundary");
+    FString ContentType = FString::Printf(TEXT("multipart/form-data; boundary=%s"), *Boundary);
+
+    TArray<uint8> Body;
+    auto AppendStr = [&Body](const FString& Str)
+    {
+        FTCHARToUTF8 Converted(*Str);
+        Body.Append((const uint8*)Converted.Get(), Converted.Length());
+    };
+
+    AppendStr(FString::Printf(TEXT("--%s\r\n"), *Boundary));
+    AppendStr(FString::Printf(TEXT("Content-Disposition: form-data; name=\"image\"; filename=\"%s\"\r\n"), *Filename));
+    AppendStr(TEXT("Content-Type: image/png\r\n\r\n"));
+    Body.Append(FileData);
+    AppendStr(FString::Printf(TEXT("\r\n--%s--\r\n"), *Boundary));
+
+    TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
+    Request->SetURL(BaseUrl + TEXT("/upload/image"));
+    Request->SetVerb(TEXT("POST"));
+    Request->SetHeader(TEXT("Content-Type"), ContentType);
+    Request->SetContent(Body);
+
+    Request->OnProcessRequestComplete().BindLambda(
+        [OnComplete, Filename](FHttpRequestPtr, FHttpResponsePtr Response, bool bSucceeded)
+        {
+            if (!bSucceeded || !Response.IsValid() || !EHttpResponseCodes::IsOk(Response->GetResponseCode()))
+            {
+                UE_LOG(LogTemp, Error, TEXT("ComfyUI: Upload failed"));
+                OnComplete(false, TEXT(""));
+                return;
+            }
+
+            // Response contains the filename ComfyUI stored it as
+            TSharedPtr<FJsonObject> JsonResponse;
+            const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Response->GetContentAsString());
+            FString StoredFilename = Filename;
+            if (FJsonSerializer::Deserialize(Reader, JsonResponse) && JsonResponse.IsValid())
+            {
+                FString Name;
+                if (JsonResponse->TryGetStringField(TEXT("name"), Name))
+                    StoredFilename = Name;
+            }
+
+            UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Uploaded image as: %s"), *StoredFilename);
+            OnComplete(true, StoredFilename);
+        });
+
+    Request->ProcessRequest();
 }
+
+void SComfyUIPanel::DownloadImageFromComfyUI(const FString& Filename, TFunction<void(bool, const FString&)> OnComplete)
+{
+    const UComfyUISettings* Settings = GetDefault<UComfyUISettings>();
+    FString BaseUrl = Settings ? Settings->BaseUrl : TEXT("http://127.0.0.1:8188");
+
+    FString Url = BaseUrl + TEXT("/view?filename=") + FPlatformHttp::UrlEncode(Filename) + TEXT("&type=output");
+
+    TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
+    Request->SetURL(Url);
+    Request->SetVerb(TEXT("GET"));
+
+    Request->OnProcessRequestComplete().BindLambda(
+        [OnComplete, Filename](FHttpRequestPtr, FHttpResponsePtr Response, bool bSucceeded)
+        {
+            if (!bSucceeded || !Response.IsValid() || !EHttpResponseCodes::IsOk(Response->GetResponseCode()))
+            {
+                UE_LOG(LogTemp, Error, TEXT("ComfyUI: Download failed for: %s"), *Filename);
+                OnComplete(false, TEXT(""));
+                return;
+            }
+
+            // Save to local temp folder
+            FString TempFolder = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("ComfyUITemp"));
+            IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
+            if (!PlatformFile.DirectoryExists(*TempFolder))
+                PlatformFile.CreateDirectoryTree(*TempFolder);
+
+            FString LocalPath = FPaths::Combine(TempFolder, Filename);
+            const TArray<uint8>& Content = Response->GetContent();
+
+            if (!FFileHelper::SaveArrayToFile(Content, *LocalPath))
+            {
+                UE_LOG(LogTemp, Error, TEXT("ComfyUI: Failed to save downloaded image to: %s"), *LocalPath);
+                OnComplete(false, TEXT(""));
+                return;
+            }
+
+            UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Downloaded image to: %s"), *LocalPath);
+            OnComplete(true, LocalPath);
+        });
+
+    Request->ProcessRequest();
+}
+
+FString SComfyUIPanel::GetLocalTempFolder() const
+{
+    return FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("ComfyUITemp"));
+}
+
+// ============================================================================
+// Helpers
+// ============================================================================
 
 bool SComfyUIPanel::LoadWorkflowFromFile(const FString& RelativePath, TSharedPtr<FJsonObject>& OutWorkflow)
 {
     FString WorkflowPath;
     if (const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("ComfyUI")))
-    {
         WorkflowPath = FPaths::Combine(Plugin->GetBaseDir(), RelativePath);
-    }
 
     if (!FPaths::FileExists(WorkflowPath))
     {
@@ -990,9 +1075,9 @@ void SComfyUIPanel::LoadAndDisplayImage(const FString& FilePath, bool bPreviewB)
     if (!Texture) return;
 
     Texture->AddToRoot();
-    
+
     TSharedPtr<FSlateBrush>& Brush = bPreviewB ? ImageBrushB : ImageBrushA;
-    TSharedPtr<SImage>& Preview = bPreviewB ? PreviewImageB : PreviewImageA;
+    TSharedPtr<SImage>& Preview    = bPreviewB ? PreviewImageB : PreviewImageA;
 
     if (Brush.IsValid() && Brush->GetResourceObject())
         if (UTexture2D* Old = Cast<UTexture2D>(Brush->GetResourceObject()))
@@ -1008,7 +1093,7 @@ void SComfyUIPanel::LoadAndDisplayImage(const FString& FilePath, bool bPreviewB)
         Preview->SetImage(Brush.Get());
 }
 
-void SComfyUIPanel::OnPromptTextChanged(const FText& NewText)       { PromptText = NewText.ToString(); }
+void SComfyUIPanel::OnPromptTextChanged(const FText& NewText)        { PromptText = NewText.ToString(); }
 void SComfyUIPanel::OnNegativePromptTextChanged(const FText& NewText) { NegativePromptText = NewText.ToString(); }
 void SComfyUIPanel::OnWidthChanged(TSharedPtr<FString> NewSelection, ESelectInfo::Type)  { SelectedWidth = NewSelection; }
 void SComfyUIPanel::OnHeightChanged(TSharedPtr<FString> NewSelection, ESelectInfo::Type) { SelectedHeight = NewSelection; }

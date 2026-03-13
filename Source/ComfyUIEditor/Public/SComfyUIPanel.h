@@ -14,7 +14,7 @@ struct FComfyWorkflowParams
     /** The fully patched workflow JSON, ready to POST to /prompt */
     FString WorkflowJson;
 
-    /** Filename prefix to pass to GetLatestOutputImage after completion */
+    /** Prefix used for asset naming on import */
     FString OutputPrefix;
 
     /** Status message shown while the workflow is running */
@@ -23,12 +23,13 @@ struct FComfyWorkflowParams
     /** Status message shown when the workflow completes successfully */
     FString CompleteStatus;
 
-    /** If true, the output image replaces CurrentPreviewImagePath and updates the preview */
+    /** If true, the output image updates the preview */
     bool bUpdatePreview = true;
 
     /** If true, auto-imports the result to the UE project (used for 360 generation) */
     bool bAutoImport = false;
-    
+
+    /** If true, result goes to Preview B, otherwise Preview A */
     bool bTargetPreviewB = false;
 };
 
@@ -62,7 +63,7 @@ private:
     TSharedPtr<class SImage> PreviewImageB;
     TSharedPtr<FSlateBrush> ImageBrushB;
     FString PreviewImagePathB;
-    
+
     TWeakPtr<SComfyUIPanel> WeakThis;
 
     // Resolution controls
@@ -77,13 +78,10 @@ private:
     FString CurrentPromptId;
     FString CurrentFilenamePrefix = TEXT("UE_Editor");
 
-    // Img2Img input — set via file picker, falls back to preview image
-    FString Img2ImgInputPath;
+    // Img2Img
     FString Img2ImgPromptText = TEXT("Edit the image...");
-    //float Img2ImgCreativity = 2.0f;
 
     // Connection polling
-    int32 ConnectionAttempts = 0;
     FTimerHandle ConnectionTimerHandle;
 
     // Composure
@@ -106,7 +104,6 @@ private:
     // -------------------------------------------------------------------------
     // UI Callbacks
     // -------------------------------------------------------------------------
-    FReply OnStartComfyClicked();
     FReply OnGenerateClicked();
     FReply OnImg2ImgBrowseClicked();
     FReply OnImg2ImgClicked();
@@ -129,7 +126,15 @@ private:
     void LoadAndDisplayImage(const FString& FilePath, bool bPreviewB);
     void ImportImageToProject(const FString& ImagePath, const FString& AssetNamePrefix);
     void ApplyTextureToComposurePlates(UTexture2D* Texture);
-    FString GetComfyInputFolder() const;
+
+    /** Upload a local image file to ComfyUI's input folder via /upload/image */
+    void UploadImageToComfyUI(const FString& LocalFilePath, TFunction<void(bool bSuccess, const FString& Filename)> OnComplete);
+
+    /** Download an output image from ComfyUI via /view and save to local temp folder */
+    void DownloadImageFromComfyUI(const FString& Filename, TFunction<void(bool bSuccess, const FString& LocalPath)> OnComplete);
+
+    /** Returns a local temp folder for downloaded images */
+    FString GetLocalTempFolder() const;
 
     bool LoadWorkflowFromFile(const FString& RelativePath, TSharedPtr<FJsonObject>& OutWorkflow);
     FString SerializeWorkflow(const TSharedPtr<FJsonObject>& WorkflowObj);
