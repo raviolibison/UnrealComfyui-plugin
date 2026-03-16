@@ -31,7 +31,8 @@ public class ComfyUIEditor : ModuleRules
                 "JsonUtilities",
                 "Engine",
                 "projects",
-                "RenderCore"
+                "RenderCore",
+                "HDRIBackdrop"
             }
         );
         if (Target.bBuildEditor)

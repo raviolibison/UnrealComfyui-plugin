@@ -29,6 +29,9 @@ struct FComfyWorkflowParams
     /** If true, auto-imports the result to the UE project (used for 360 generation) */
     bool bAutoImport = false;
 
+    /**If true convert the result to HDR and apply to HDRIbackdrop*/
+	bool bConvertToHDRI = false;
+
     /** If true, result goes to Preview B, otherwise Preview A */
     bool bTargetPreviewB = false;
 };
@@ -87,6 +90,16 @@ private:
     // Composure
     FString LastImportedImagePath;
     TWeakObjectPtr<UTexture2D> LastImportedTexture;
+
+    /** Convert an LDR image (PNG/JPEG) to a .hdr file with highlight boosting.
+ *  Returns the path to the written .hdr file, or empty string on failure. */
+    FString ConvertImageToHDR(const FString& SourceImagePath);
+
+    /** Import an .hdr file as a UTexture2D with HDR settings (no sRGB, HDR float). */
+    UTexture2D* ImportHDRToProject(const FString& HdrFilePath, const FString& AssetName);
+
+    /** Find the HDRIBackdrop actor in the current level and apply the given texture. */
+    void ApplyTextureToHDRIBackdrop(UTexture2D* Texture);
 
     // -------------------------------------------------------------------------
     // Generic Workflow System

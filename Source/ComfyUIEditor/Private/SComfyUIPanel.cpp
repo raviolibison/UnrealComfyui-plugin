@@ -25,6 +25,10 @@
 #include "EngineUtils.h"
 #include "IDesktopPlatform.h"
 #include "DesktopPlatformModule.h"
+#include "Engine/TextureCube.h"
+#include "ImageUtils.h"
+#include "IImageWrapper.h"
+#include "IImageWrapperModule.h"
 
 #define LOCTEXT_NAMESPACE "SComfyUIPanel"
 
@@ -529,7 +533,23 @@ void SComfyUIPanel::OnWorkflowComplete(bool bSuccess, const FString& PromptId, F
                                     Panel->LoadAndDisplayImage(LocalPath, Params.bTargetPreviewB);
                                 }
 
-                                if (Params.bAutoImport)
+                                if (Params.bConvertToHDRI)
+                                {
+                                    // Convert downloaded panorama to .hdr
+                                    FString HdrPath = Panel->ConvertImageToHDR(LocalPath);
+                                    if (!HdrPath.IsEmpty())
+                                    {
+                                        // Import as HDR texture
+                                        UTexture2D* HdrTexture = Panel->ImportHDRToProject(
+                                            HdrPath, Params.OutputPrefix);
+                                        if (HdrTexture)
+                                        {
+                                            // Apply to HDRIBackdrop in scene
+                                            Panel->ApplyTextureToHDRIBackdrop(HdrTexture);
+                                        }
+                                    }
+                                }
+                                else if (Params.bAutoImport)
                                 {
                                     Panel->ImportImageToProject(LocalPath, Params.OutputPrefix);
                                 }
@@ -645,7 +665,8 @@ void SComfyUIPanel::Start360Generation(const FString& SourcePath)
     WorkflowParams.RunningStatus  = TEXT("Generating 360\u00b0 panorama...");
     WorkflowParams.CompleteStatus = TEXT("360\u00b0 HDRI generated and imported to project!");
     WorkflowParams.bUpdatePreview = false;
-    WorkflowParams.bAutoImport    = true;
+    WorkflowParams.bAutoImport    = false;
+	WorkflowParams.bConvertToHDRI = true;
 
     SubmitWorkflow(WorkflowParams);
 }
@@ -812,6 +833,251 @@ void SComfyUIPanel::ImportImageToProject(const FString& ImagePath, const FString
     {
         UpdateStatus(TEXT("Error: Failed to import texture"));
     }
+}
+
+// ============================================================================
+// HDR Conversion
+// ============================================================================
+
+FString SComfyUIPanel::ConvertImageToHDR(const FString& SourceImagePath)
+{
+    // Load image bytes
+    TArray<uint8> RawFileData;
+    if (!FFileHelper::LoadFileToArray(RawFileData, *SourceImagePath))
+    {
+        UE_LOG(LogTemp, Error, TEXT("ComfyUI HDR: Failed to read source: %s"), *SourceImagePath);
+        return FString();
+    }
+
+    // Decode via ImageWrapper
+    IImageWrapperModule& ImageWrapperModule = FModuleManager::LoadModuleChecked<IImageWrapperModule>(TEXT("ImageWrapper"));
+
+    EImageFormat DetectedFormat = EImageFormat::PNG;
+    if (SourceImagePath.EndsWith(TEXT(".jpg")) || SourceImagePath.EndsWith(TEXT(".jpeg")))
+        DetectedFormat = EImageFormat::JPEG;
+
+    TSharedPtr<IImageWrapper> ImageWrapper = ImageWrapperModule.CreateImageWrapper(DetectedFormat);
+    if (!ImageWrapper.IsValid() || !ImageWrapper->SetCompressed(RawFileData.GetData(), RawFileData.Num()))
+    {
+        UE_LOG(LogTemp, Error, TEXT("ComfyUI HDR: Failed to decode image"));
+        return FString();
+    }
+
+    TArray<uint8> RawRGBA;
+    if (!ImageWrapper->GetRaw(ERGBFormat::BGRA, 8, RawRGBA))
+    {
+        UE_LOG(LogTemp, Error, TEXT("ComfyUI HDR: Failed to get raw pixel data"));
+        return FString();
+    }
+
+    const int32 Width = ImageWrapper->GetWidth();
+    const int32 Height = ImageWrapper->GetHeight();
+    const int32 NumPixels = Width * Height;
+
+    // Convert to float HDR with highlight boost
+    // - Gamma decode (2.2) to linearize
+    // - Boost highlights based on luminance to simulate HDR headroom
+    TArray<FLinearColor> HDRPixels;
+    HDRPixels.SetNum(NumPixels);
+
+    for (int32 i = 0; i < NumPixels; i++)
+    {
+        // BGRA byte order
+        const int32 Idx = i * 4;
+        float B = RawRGBA[Idx + 0] / 255.0f;
+        float G = RawRGBA[Idx + 1] / 255.0f;
+        float R = RawRGBA[Idx + 2] / 255.0f;
+
+        // Gamma decode to linear
+        R = FMath::Pow(R, 2.2f);
+        G = FMath::Pow(G, 2.2f);
+        B = FMath::Pow(B, 2.2f);
+
+        // Luminance-based highlight boost
+        // Bright areas (sky, light sources) get pushed significantly higher
+        // to give the HDRI Backdrop meaningful light intensity variation
+        float Luminance = 0.2126f * R + 0.7152f * G + 0.0722f * B;
+        float Boost = 1.0f + FMath::Pow(FMath::Clamp(Luminance, 0.0f, 1.0f), 2.0f) * 8.0f;
+
+        HDRPixels[i] = FLinearColor(R * Boost, G * Boost, B * Boost, 1.0f);
+    }
+
+    // Write Radiance .hdr format (RGBE)
+    // Header: magic + resolution
+    FString HdrPath = FPaths::ChangeExtension(SourceImagePath, TEXT(".hdr"));
+
+    TArray<uint8> HdrFile;
+    // Reserve rough estimate
+    HdrFile.Reserve(Width * Height * 4 + 256);
+
+    auto AppendString = [&HdrFile](const FString& Str)
+        {
+            FTCHARToUTF8 Utf8(*Str);
+            HdrFile.Append((const uint8*)Utf8.Get(), Utf8.Length());
+        };
+
+    // Radiance HDR header
+    AppendString(TEXT("#?RADIANCE\n"));
+    AppendString(TEXT("FORMAT=32-bit_rle_rgbe\n"));
+    AppendString(TEXT("\n"));
+    AppendString(FString::Printf(TEXT("-Y %d +X %d\n"), Height, Width));
+
+    // Write pixels as RGBE (uncompressed scanlines)
+    for (int32 y = 0; y < Height; y++)
+    {
+        for (int32 x = 0; x < Width; x++)
+        {
+            const FLinearColor& Pixel = HDRPixels[y * Width + x];
+            float R = FMath::Max(Pixel.R, 0.0f);
+            float G = FMath::Max(Pixel.G, 0.0f);
+            float B = FMath::Max(Pixel.B, 0.0f);
+
+            float MaxChannel = FMath::Max3(R, G, B);
+
+            if (MaxChannel < 1e-32f)
+            {
+                // Black pixel — write 0,0,0,0
+                uint8 Zero[4] = { 0, 0, 0, 0 };
+                HdrFile.Append(Zero, 4);
+            }
+            else
+            {
+                int Exponent;
+                float Mantissa = frexp(MaxChannel, &Exponent);
+                float Scale = Mantissa * 256.0f / MaxChannel;
+
+                uint8 RGBE[4];
+                RGBE[0] = (uint8)FMath::Clamp(R * Scale, 0.0f, 255.0f);
+                RGBE[1] = (uint8)FMath::Clamp(G * Scale, 0.0f, 255.0f);
+                RGBE[2] = (uint8)FMath::Clamp(B * Scale, 0.0f, 255.0f);
+                RGBE[3] = (uint8)(Exponent + 128);
+
+                HdrFile.Append(RGBE, 4);
+            }
+        }
+    }
+
+    if (!FFileHelper::SaveArrayToFile(HdrFile, *HdrPath))
+    {
+        UE_LOG(LogTemp, Error, TEXT("ComfyUI HDR: Failed to write .hdr file: %s"), *HdrPath);
+        return FString();
+    }
+
+    UE_LOG(LogTemp, Warning, TEXT("ComfyUI HDR: Converted to: %s (%dx%d)"), *HdrPath, Width, Height);
+    return HdrPath;
+}
+
+UTexture2D* SComfyUIPanel::ImportHDRToProject(const FString& HdrFilePath, const FString& AssetName)
+{
+#if WITH_EDITOR
+    FString AssetPath = UComfyUIBlueprintLibrary::GenerateUniqueAssetName(
+        TEXT("/Game/GeneratedTextures/HDRI"), AssetName);
+
+    UTexture2D* Texture = UComfyUIBlueprintLibrary::ImportImageAsAsset(HdrFilePath, AssetPath);
+    if (Texture)
+    {
+        // Configure for HDR / environment map use
+        Texture->SRGB = false;
+        Texture->CompressionSettings = TC_HDR;
+        Texture->LODGroup = TEXTUREGROUP_Skybox;
+
+        // For equirectangular panoramas used as skybox
+        Texture->AddressX = TA_Wrap;
+        Texture->AddressY = TA_Clamp;
+
+        // Force no mip generation falloff — keep full res for sky
+        Texture->MipGenSettings = TMGS_NoMipmaps;
+
+        Texture->UpdateResource();
+        Texture->PostEditChange();
+        Texture->MarkPackageDirty();
+
+        UE_LOG(LogTemp, Warning, TEXT("ComfyUI HDR: Imported HDRI texture: %s"), *AssetPath);
+    }
+    return Texture;
+#else
+    return nullptr;
+#endif
+}
+
+void SComfyUIPanel::ApplyTextureToHDRIBackdrop(UTexture2D* Texture)
+{
+    if (!Texture || !GEditor || !GEditor->GetEditorWorldContext().World())
+    {
+        UpdateStatus(TEXT("Error: No texture or no editor world"));
+        return;
+    }
+
+    UWorld* World = GEditor->GetEditorWorldContext().World();
+
+    // Find HDRIBackdrop actor(s) in the scene
+    // HDRIBackdrop is AHDRIBackdrop from the HDRIBackdrop plugin
+    // We use name-based search to avoid hard header dependency
+    int32 BackdropsUpdated = 0;
+
+    for (TActorIterator<AActor> It(World); It; ++It)
+    {
+        AActor* Actor = *It;
+        if (!Actor) continue;
+
+        // Check if this is an HDRIBackdrop by class name
+        // (avoids needing #include "HDRIBackdrop.h" and the module dependency)
+        FString ClassName = Actor->GetClass()->GetName();
+        if (!ClassName.Contains(TEXT("HDRIBackdrop")))
+            continue;
+
+        // The HDRIBackdrop has a "Cubemap" property (UTextureCube*) for the full
+        // cube map, but it also has a "SetCubemap" function.
+        // However, for equirectangular 2D textures, we target the
+        // "Mesh" material's texture parameter or the backdrop's own property.
+        //
+        // HDRIBackdrop actually uses a UTextureCube — but we have a 2D equirect.
+        // The simplest approach: set the "Cubemap" property via reflection.
+        // If your HDRIBackdrop is set up to accept a 2D equirectangular texture
+        // (some setups use a custom material), target that property instead.
+        //
+        // Standard HDRIBackdrop approach: find the "Cubemap" UProperty
+        FProperty* CubemapProp = Actor->GetClass()->FindPropertyByName(TEXT("Cubemap"));
+        if (CubemapProp)
+        {
+            FObjectProperty* ObjProp = CastField<FObjectProperty>(CubemapProp);
+            if (ObjProp)
+            {
+                ObjProp->SetObjectPropertyValue(
+                    CubemapProp->ContainerPtrToValuePtr<void>(Actor), Texture);
+
+                FPropertyChangedEvent PropEvent(CubemapProp);
+                Actor->PostEditChangeProperty(PropEvent);
+                Actor->Modify();
+                BackdropsUpdated++;
+
+                UE_LOG(LogTemp, Warning, TEXT("ComfyUI HDR: Applied to HDRIBackdrop: %s"),
+                    *Actor->GetName());
+            }
+        }
+
+        // Also try "UseProjectionTexture" pattern — some setups expose
+        // an equirectangular texture slot directly
+        FProperty* ProjectionProp = Actor->GetClass()->FindPropertyByName(TEXT("ProjectionTexture"));
+        if (ProjectionProp)
+        {
+            if (FObjectProperty* ObjProp = CastField<FObjectProperty>(ProjectionProp))
+            {
+                ObjProp->SetObjectPropertyValue(
+                    ProjectionProp->ContainerPtrToValuePtr<void>(Actor), Texture);
+                FPropertyChangedEvent PropEvent(ProjectionProp);
+                Actor->PostEditChangeProperty(PropEvent);
+            }
+        }
+    }
+
+    if (GEditor)
+        GEditor->RedrawAllViewports();
+
+    if (BackdropsUpdated > 0)
+        UpdateStatus(FString::Printf(TEXT("Applied HDRI to %d backdrop(s)"), BackdropsUpdated));
+    else
+        UpdateStatus(TEXT("No HDRIBackdrop actor found in scene. Place one first."));
 }
 
 // ============================================================================

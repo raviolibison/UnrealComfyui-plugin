@@ -71,47 +71,37 @@ void FComfyUIWebSocketHandler::OnMessage(const FString& Message)
         return;
     }
 
-    FString Type = JsonObject->GetStringField(TEXT("type"));
+    FString Type;
+    if (!JsonObject->TryGetStringField(TEXT("type"), Type))
+        return;
 
-    // Use queue_remaining status as the completion signal
-    if (Type == TEXT("status"))
+    // execution_complete fires once per prompt with the exact prompt_id
+    // This is the correct signal for multi-user scenarios — each client
+    // only reacts to their own job, not the global queue emptying
+    if (Type == TEXT("execution_complete"))
     {
         const TSharedPtr<FJsonObject>* DataObject;
         if (JsonObject->TryGetObjectField(TEXT("data"), DataObject))
         {
-            const TSharedPtr<FJsonObject>* StatusObject;
-            if ((*DataObject)->TryGetObjectField(TEXT("status"), StatusObject))  // Fixed: added closing quote
+            FString PromptId;
+            if ((*DataObject)->TryGetStringField(TEXT("prompt_id"), PromptId))
             {
-                const TSharedPtr<FJsonObject>* ExecInfoObject;
-                if ((*StatusObject)->TryGetObjectField(TEXT("exec_info"), ExecInfoObject))
+                UE_LOG(LogTemp, Warning, TEXT("ComfyUI WebSocket: execution_complete for prompt %s"), *PromptId);
+
+                if (FComfyUIWorkflowCompleteDelegateNative* Callback = PromptCallbacks.Find(PromptId))
                 {
-                    int32 QueueRemaining = (*ExecInfoObject)->GetIntegerField(TEXT("queue_remaining"));
-                    
-                    // When queue empties, trigger all pending callbacks
-                    if (QueueRemaining == 0 && PromptCallbacks.Num() > 0)
-                    {
-                        UE_LOG(LogTemp, Warning, TEXT("ComfyUI WebSocket: Queue complete, triggering %d callback(s)"), PromptCallbacks.Num());
-                        
-                        // Trigger all pending callbacks
-                        TArray<FString> CompletedPrompts;
-                        for (auto& Pair : PromptCallbacks)
-                        {
-                            UE_LOG(LogTemp, Warning, TEXT("ComfyUI WebSocket: Executing callback for prompt %s"), *Pair.Key);
-                            Pair.Value.ExecuteIfBound(true, Pair.Key);
-                            CompletedPrompts.Add(Pair.Key);
-                        }
-                        
-                        // Clear all callbacks
-                        for (const FString& PromptId : CompletedPrompts)
-                        {
-                            PromptCallbacks.Remove(PromptId);
-                        }
-                    }
+                    Callback->ExecuteIfBound(true, PromptId);
+                    PromptCallbacks.Remove(PromptId);
+                }
+                else
+                {
+                    // Not our prompt — belongs to another user, ignore it
+                    UE_LOG(LogTemp, Warning, TEXT("ComfyUI WebSocket: execution_complete for untracked prompt %s (another user's job)"), *PromptId);
                 }
             }
         }
     }
-    // Handle errors
+    // Handle errors — also prompt-specific
     else if (Type == TEXT("execution_error"))
     {
         const TSharedPtr<FJsonObject>* DataObject;
