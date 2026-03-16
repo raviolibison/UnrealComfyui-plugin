@@ -127,3 +127,12 @@ void FComfyUIWebSocketHandler::WatchPrompt(const FString& PromptId, const FComfy
     PromptCallbacks.Add(PromptId, Callback);
     UE_LOG(LogTemp, Warning, TEXT("ComfyUI WebSocket: Registered watcher for prompt %s (total watchers: %d)"), *PromptId, PromptCallbacks.Num());
 }
+
+void FComfyUIWebSocketHandler::UnwatchPrompt(const FString& PromptId)
+{
+    if (PromptCallbacks.Remove(PromptId) > 0)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("ComfyUI WebSocket: Removed stale watcher for prompt %s (total watchers: %d)"),
+            *PromptId, PromptCallbacks.Num());
+    }
+}

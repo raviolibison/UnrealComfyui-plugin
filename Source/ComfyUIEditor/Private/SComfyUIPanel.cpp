@@ -345,6 +345,7 @@ void SComfyUIPanel::SubmitWorkflow(const FComfyWorkflowParams& Params)
 
     TSharedPtr<FJsonObject> Wrapper = MakeShared<FJsonObject>();
     Wrapper->SetObjectField(TEXT("prompt"), PromptObject);
+    Wrapper->SetStringField(TEXT("client_id"), TEXT("unrealplugin"));
 
     FString RequestBody;
     const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&RequestBody);
@@ -401,6 +402,10 @@ void SComfyUIPanel::SubmitWorkflow(const FComfyWorkflowParams& Params)
                             + TEXT("/ws");
                         WSHandler->Connect(WsUrl);
                     }
+
+                    // Remove our own previous stale watcher before registering new one
+                    if (!Panel->CurrentPromptId.IsEmpty())
+                        WSHandler->UnwatchPrompt(Panel->CurrentPromptId);
 
                     FComfyUIWorkflowCompleteDelegateNative CompleteDelegate;
                     CompleteDelegate.BindLambda(

@@ -15,6 +15,7 @@ public:
     bool IsConnected() const;
 
     void WatchPrompt(const FString& PromptId, const FComfyUIWorkflowCompleteDelegateNative& Callback);
+    void UnwatchPrompt(const FString& PromptId);
 
 private:
     void OnConnected();
