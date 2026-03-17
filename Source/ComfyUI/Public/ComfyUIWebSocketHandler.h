@@ -4,11 +4,15 @@
 #include "IWebSocket.h"
 #include "ComfyUIRequestTypes.h"
 
+DECLARE_MULTICAST_DELEGATE(FOnWebSocketConnected);
+
 class COMFYUI_API FComfyUIWebSocketHandler : public TSharedFromThis<FComfyUIWebSocketHandler>
 {
 public:
     FComfyUIWebSocketHandler();
     ~FComfyUIWebSocketHandler();
+
+    FOnWebSocketConnected OnConnectedEvent;
 
     void Connect(const FString& Url);
     void Disconnect();

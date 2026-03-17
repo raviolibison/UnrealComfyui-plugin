@@ -29,6 +29,7 @@
 #include "ImageUtils.h"
 #include "IImageWrapper.h"
 #include "IImageWrapperModule.h"
+#include "Misc/PackageName.h"
 
 #define LOCTEXT_NAMESPACE "SComfyUIPanel"
 
@@ -389,34 +390,56 @@ void SComfyUIPanel::SubmitWorkflow(const FComfyWorkflowParams& Params)
 
             UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Submitted workflow, prompt_id: %s"), *PromptId);
 
+            Panel->StartHistoryPoller(PromptId, CapturedParams);
+
             if (FComfyUIModule* Module = FModuleManager::GetModulePtr<FComfyUIModule>(TEXT("ComfyUI")))
             {
                 TSharedPtr<FComfyUIWebSocketHandler> WSHandler = Module->GetWebSocketHandler();
-                if (WSHandler.IsValid())
-                {
-                    if (!WSHandler->IsConnected())
+                if (!WSHandler.IsValid()) return;
+
+                FString WsUrl = BaseUrl
+                    .Replace(TEXT("http://"), TEXT("ws://"))
+                    .Replace(TEXT("https://"), TEXT("wss://"))
+                    + TEXT("/ws?clientId=unrealplugin");
+
+                // Build the watch+register logic as a lambda so we can defer it
+                // until the socket is actually connected
+                auto RegisterWatcher = [CapturedWeakThis, CapturedParams, PromptId, WSHandler]()
                     {
-                        FString WsUrl = BaseUrl
-                            .Replace(TEXT("http://"), TEXT("ws://"))
-                            .Replace(TEXT("https://"), TEXT("wss://"))
-                            + TEXT("/ws");
-                        WSHandler->Connect(WsUrl);
-                    }
+                        TSharedPtr<SComfyUIPanel> InnerPanel = CapturedWeakThis.Pin();
+                        if (!InnerPanel.IsValid()) return;
 
-                    // Remove our own previous stale watcher before registering new one
-                    if (!Panel->CurrentPromptId.IsEmpty())
-                        WSHandler->UnwatchPrompt(Panel->CurrentPromptId);
+                        // Clear our own previous stale watcher if any
+                        if (!InnerPanel->CurrentPromptId.IsEmpty())
+                            WSHandler->UnwatchPrompt(InnerPanel->CurrentPromptId);
 
-                    FComfyUIWorkflowCompleteDelegateNative CompleteDelegate;
-                    CompleteDelegate.BindLambda(
-                        [CapturedWeakThis, CapturedParams, PromptId](bool bSuccess, const FString& InPromptId)
+                        FComfyUIWorkflowCompleteDelegateNative CompleteDelegate;
+                        CompleteDelegate.BindLambda(
+                            [CapturedWeakThis, CapturedParams, PromptId](bool bSuccess, const FString& InPromptId)
+                            {
+                                TSharedPtr<SComfyUIPanel> Panel = CapturedWeakThis.Pin();
+                                if (Panel.IsValid())
+                                    Panel->OnWorkflowComplete(bSuccess, PromptId, CapturedParams);
+                            });
+
+                        WSHandler->WatchPrompt(PromptId, CompleteDelegate);
+                    };
+
+                if (WSHandler->IsConnected())
+                {
+                    // Already connected — register immediately
+                    RegisterWatcher();
+                }
+                else
+                {
+                    // Not connected yet — defer registration until handshake completes
+                    WSHandler->OnConnectedEvent.AddLambda([RegisterWatcher, WSHandler]()
                         {
-                            TSharedPtr<SComfyUIPanel> InnerPanel = CapturedWeakThis.Pin();
-                            if (InnerPanel.IsValid())
-                                InnerPanel->OnWorkflowComplete(bSuccess, PromptId, CapturedParams);
+                            RegisterWatcher();
+                            WSHandler->OnConnectedEvent.Clear();
                         });
 
-                    WSHandler->WatchPrompt(PromptId, CompleteDelegate);
+                    WSHandler->Connect(WsUrl);
                 }
             }
         });
@@ -426,6 +449,9 @@ void SComfyUIPanel::SubmitWorkflow(const FComfyWorkflowParams& Params)
 
 void SComfyUIPanel::OnWorkflowComplete(bool bSuccess, const FString& PromptId, FComfyWorkflowParams Params)
 {
+
+    StopHistoryPoller();
+
     UE_LOG(LogTemp, Warning, TEXT("ComfyUI: OnWorkflowComplete - Success: %d, PromptId: %s"),
         bSuccess, *PromptId);
 
@@ -545,11 +571,10 @@ void SComfyUIPanel::OnWorkflowComplete(bool bSuccess, const FString& PromptId, F
                                     if (!HdrPath.IsEmpty())
                                     {
                                         // Import as HDR texture
-                                        UTexture2D* HdrTexture = Panel->ImportHDRToProject(
+                                        UTextureCube* HdrTexture = Panel->ImportHDRToProject(
                                             HdrPath, Params.OutputPrefix);
                                         if (HdrTexture)
                                         {
-                                            // Apply to HDRIBackdrop in scene
                                             Panel->ApplyTextureToHDRIBackdrop(HdrTexture);
                                         }
                                     }
@@ -907,105 +932,127 @@ FString SComfyUIPanel::ConvertImageToHDR(const FString& SourceImagePath)
         HDRPixels[i] = FLinearColor(R * Boost, G * Boost, B * Boost, 1.0f);
     }
 
-    // Write Radiance .hdr format (RGBE)
-    // Header: magic + resolution
-    FString HdrPath = FPaths::ChangeExtension(SourceImagePath, TEXT(".hdr"));
+    
+    // Write as 32-bit float EXR — UE imports this perfectly as HDR, no dialog
+    FString Timestamp = FDateTime::Now().ToString(TEXT("%Y%m%d_%H%M%S"));
+    FString HdrPath = FPaths::Combine(
+        FPaths::GetPath(SourceImagePath),
+        FPaths::GetBaseFilename(SourceImagePath) + TEXT("_") + Timestamp + TEXT(".exr")
+    );
 
-    TArray<uint8> HdrFile;
-    // Reserve rough estimate
-    HdrFile.Reserve(Width * Height * 4 + 256);
-
-    auto AppendString = [&HdrFile](const FString& Str)
-        {
-            FTCHARToUTF8 Utf8(*Str);
-            HdrFile.Append((const uint8*)Utf8.Get(), Utf8.Length());
-        };
-
-    // Radiance HDR header
-    AppendString(TEXT("#?RADIANCE\n"));
-    AppendString(TEXT("FORMAT=32-bit_rle_rgbe\n"));
-    AppendString(TEXT("\n"));
-    AppendString(FString::Printf(TEXT("-Y %d +X %d\n"), Height, Width));
-
-    // Write pixels as RGBE (uncompressed scanlines)
-    for (int32 y = 0; y < Height; y++)
+    TSharedPtr<IImageWrapper> ExrWrapper = ImageWrapperModule.CreateImageWrapper(EImageFormat::EXR);
+    if (!ExrWrapper.IsValid())
     {
-        for (int32 x = 0; x < Width; x++)
-        {
-            const FLinearColor& Pixel = HDRPixels[y * Width + x];
-            float R = FMath::Max(Pixel.R, 0.0f);
-            float G = FMath::Max(Pixel.G, 0.0f);
-            float B = FMath::Max(Pixel.B, 0.0f);
-
-            float MaxChannel = FMath::Max3(R, G, B);
-
-            if (MaxChannel < 1e-32f)
-            {
-                // Black pixel — write 0,0,0,0
-                uint8 Zero[4] = { 0, 0, 0, 0 };
-                HdrFile.Append(Zero, 4);
-            }
-            else
-            {
-                int Exponent;
-                float Mantissa = frexp(MaxChannel, &Exponent);
-                float Scale = Mantissa * 256.0f / MaxChannel;
-
-                uint8 RGBE[4];
-                RGBE[0] = (uint8)FMath::Clamp(R * Scale, 0.0f, 255.0f);
-                RGBE[1] = (uint8)FMath::Clamp(G * Scale, 0.0f, 255.0f);
-                RGBE[2] = (uint8)FMath::Clamp(B * Scale, 0.0f, 255.0f);
-                RGBE[3] = (uint8)(Exponent + 128);
-
-                HdrFile.Append(RGBE, 4);
-            }
-        }
-    }
-
-    if (!FFileHelper::SaveArrayToFile(HdrFile, *HdrPath))
-    {
-        UE_LOG(LogTemp, Error, TEXT("ComfyUI HDR: Failed to write .hdr file: %s"), *HdrPath);
+        UE_LOG(LogTemp, Error, TEXT("ComfyUI HDR: Failed to create EXR wrapper"));
         return FString();
     }
 
-    UE_LOG(LogTemp, Warning, TEXT("ComfyUI HDR: Converted to: %s (%dx%d)"), *HdrPath, Width, Height);
+    // Pack HDRPixels into raw RGBA float array
+    TArray<uint8> FloatData;
+    FloatData.SetNumUninitialized(NumPixels * 4 * sizeof(float));
+    float* FloatPtr = reinterpret_cast<float*>(FloatData.GetData());
+
+    for (int32 i = 0; i < NumPixels; i++)
+    {
+        FloatPtr[i * 4 + 0] = HDRPixels[i].R;
+        FloatPtr[i * 4 + 1] = HDRPixels[i].G;
+        FloatPtr[i * 4 + 2] = HDRPixels[i].B;
+        FloatPtr[i * 4 + 3] = 1.0f;
+    }
+
+    ExrWrapper->SetRaw(FloatPtr, FloatData.Num(), Width, Height, ERGBFormat::RGBAF, 32);
+
+    const TArray64<uint8>& CompressedEXR = ExrWrapper->GetCompressed();
+    if (CompressedEXR.Num() == 0)
+    {
+        UE_LOG(LogTemp, Error, TEXT("ComfyUI HDR: Failed to compress EXR"));
+        return FString();
+    }
+
+    if (!FFileHelper::SaveArrayToFile(CompressedEXR, *HdrPath))
+    {
+        UE_LOG(LogTemp, Error, TEXT("ComfyUI HDR: Failed to save EXR to: %s"), *HdrPath);
+        return FString();
+    }
+
+    UE_LOG(LogTemp, Warning, TEXT("ComfyUI HDR: Written EXR to: %s"), *HdrPath);
     return HdrPath;
 }
 
-UTexture2D* SComfyUIPanel::ImportHDRToProject(const FString& HdrFilePath, const FString& AssetName)
+
+UTextureCube* SComfyUIPanel::ImportHDRToProject(const FString& HdrFilePath, const FString& AssetName)
 {
 #if WITH_EDITOR
+    FString Timestamp = FDateTime::Now().ToString(TEXT("%Y%m%d_%H%M%S"));
     FString AssetPath = UComfyUIBlueprintLibrary::GenerateUniqueAssetName(
-        TEXT("/Game/GeneratedTextures/HDRI"), AssetName);
+        TEXT("/Game/GeneratedTextures/HDRI"), AssetName + TEXT("_") + Timestamp);
 
-    UTexture2D* Texture = UComfyUIBlueprintLibrary::ImportImageAsAsset(HdrFilePath, AssetPath);
-    if (Texture)
+    FString PackageName = FPackageName::ObjectPathToPackageName(AssetPath);
+    FString AssetNameClean = FPackageName::GetLongPackageAssetName(PackageName);
+
+    UPackage* Package = CreatePackage(*PackageName);
+    if (!Package)
     {
-        // Configure for HDR / environment map use
-        Texture->SRGB = false;
-        Texture->CompressionSettings = TC_HDR;
-        Texture->LODGroup = TEXTUREGROUP_Skybox;
-
-        // For equirectangular panoramas used as skybox
-        Texture->AddressX = TA_Wrap;
-        Texture->AddressY = TA_Clamp;
-
-        // Force no mip generation falloff — keep full res for sky
-        Texture->MipGenSettings = TMGS_NoMipmaps;
-
-        Texture->UpdateResource();
-        Texture->PostEditChange();
-        Texture->MarkPackageDirty();
-
-        UE_LOG(LogTemp, Warning, TEXT("ComfyUI HDR: Imported HDRI texture: %s"), *AssetPath);
+        UE_LOG(LogTemp, Error, TEXT("ComfyUI HDR: Failed to create package: %s"), *PackageName);
+        return nullptr;
     }
+
+    // Read the EXR file
+    TArray<uint8> HdrData;
+    if (!FFileHelper::LoadFileToArray(HdrData, *HdrFilePath))
+    {
+        UE_LOG(LogTemp, Error, TEXT("ComfyUI HDR: Failed to read EXR: %s"), *HdrFilePath);
+        return nullptr;
+    }
+
+    // Decode EXR to raw float pixels
+    IImageWrapperModule& ImageWrapperModule = FModuleManager::LoadModuleChecked<IImageWrapperModule>(TEXT("ImageWrapper"));
+    TSharedPtr<IImageWrapper> ExrWrapper = ImageWrapperModule.CreateImageWrapper(EImageFormat::EXR);
+    if (!ExrWrapper.IsValid() || !ExrWrapper->SetCompressed(HdrData.GetData(), HdrData.Num()))
+    {
+        UE_LOG(LogTemp, Error, TEXT("ComfyUI HDR: Failed to decode EXR"));
+        return nullptr;
+    }
+
+    TArray64<uint8> RawData;
+    if (!ExrWrapper->GetRaw(ERGBFormat::RGBAF, 32, RawData))
+    {
+        UE_LOG(LogTemp, Error, TEXT("ComfyUI HDR: Failed to get raw float data from EXR"));
+        return nullptr;
+    }
+
+    const int32 W = ExrWrapper->GetWidth();
+    const int32 H = ExrWrapper->GetHeight();
+
+    // Create UTextureCube asset
+    UTextureCube* Texture = NewObject<UTextureCube>(Package, *AssetNameClean, RF_Public | RF_Standalone);
+    if (!Texture)
+    {
+        UE_LOG(LogTemp, Error, TEXT("ComfyUI HDR: Failed to create UTextureCube"));
+        return nullptr;
+    }
+
+    // Initialize source as equirectangular longlat — UE will treat it as a cubemap
+    Texture->Source.Init(W, H, 1, 1, TSF_RGBA32F, RawData.GetData());
+    Texture->CompressionSettings = TC_HDR;
+    Texture->SRGB = false;
+    Texture->MipGenSettings = TMGS_NoMipmaps;
+    Texture->LODGroup = TEXTUREGROUP_Skybox;
+
+    Texture->UpdateResource();
+    Texture->PostEditChange();
+    Texture->MarkPackageDirty();
+
+    FAssetRegistryModule::AssetCreated(Texture);
+
+    UE_LOG(LogTemp, Warning, TEXT("ComfyUI HDR: Imported UTextureCube: %s"), *AssetPath);
     return Texture;
 #else
     return nullptr;
 #endif
 }
 
-void SComfyUIPanel::ApplyTextureToHDRIBackdrop(UTexture2D* Texture)
+void SComfyUIPanel::ApplyTextureToHDRIBackdrop(UTextureCube* Texture)
 {
     if (!Texture || !GEditor || !GEditor->GetEditorWorldContext().World())
     {
@@ -1014,10 +1061,6 @@ void SComfyUIPanel::ApplyTextureToHDRIBackdrop(UTexture2D* Texture)
     }
 
     UWorld* World = GEditor->GetEditorWorldContext().World();
-
-    // Find HDRIBackdrop actor(s) in the scene
-    // HDRIBackdrop is AHDRIBackdrop from the HDRIBackdrop plugin
-    // We use name-based search to avoid hard header dependency
     int32 BackdropsUpdated = 0;
 
     for (TActorIterator<AActor> It(World); It; ++It)
@@ -1025,55 +1068,35 @@ void SComfyUIPanel::ApplyTextureToHDRIBackdrop(UTexture2D* Texture)
         AActor* Actor = *It;
         if (!Actor) continue;
 
-        // Check if this is an HDRIBackdrop by class name
-        // (avoids needing #include "HDRIBackdrop.h" and the module dependency)
-        FString ClassName = Actor->GetClass()->GetName();
-        if (!ClassName.Contains(TEXT("HDRIBackdrop")))
+        if (!Actor->GetClass()->GetName().Contains(TEXT("HDRIBackdrop")))
             continue;
 
-        // The HDRIBackdrop has a "Cubemap" property (UTextureCube*) for the full
-        // cube map, but it also has a "SetCubemap" function.
-        // However, for equirectangular 2D textures, we target the
-        // "Mesh" material's texture parameter or the backdrop's own property.
-        //
-        // HDRIBackdrop actually uses a UTextureCube — but we have a 2D equirect.
-        // The simplest approach: set the "Cubemap" property via reflection.
-        // If your HDRIBackdrop is set up to accept a 2D equirectangular texture
-        // (some setups use a custom material), target that property instead.
-        //
-        // Standard HDRIBackdrop approach: find the "Cubemap" UProperty
+        UE_LOG(LogTemp, Warning, TEXT("ComfyUI HDR: Found HDRIBackdrop actor: %s"), *Actor->GetName());
+
         FProperty* CubemapProp = Actor->GetClass()->FindPropertyByName(TEXT("Cubemap"));
-        if (CubemapProp)
+        if (!CubemapProp)
         {
-            FObjectProperty* ObjProp = CastField<FObjectProperty>(CubemapProp);
-            if (ObjProp)
-            {
-                ObjProp->SetObjectPropertyValue(
-                    CubemapProp->ContainerPtrToValuePtr<void>(Actor), Texture);
-
-                FPropertyChangedEvent PropEvent(CubemapProp);
-                Actor->PostEditChangeProperty(PropEvent);
-                Actor->Modify();
-                BackdropsUpdated++;
-
-                UE_LOG(LogTemp, Warning, TEXT("ComfyUI HDR: Applied to HDRIBackdrop: %s"),
-                    *Actor->GetName());
-            }
+            UE_LOG(LogTemp, Error, TEXT("ComfyUI HDR: Could not find Cubemap property on HDRIBackdrop"));
+            continue;
         }
 
-        // Also try "UseProjectionTexture" pattern — some setups expose
-        // an equirectangular texture slot directly
-        FProperty* ProjectionProp = Actor->GetClass()->FindPropertyByName(TEXT("ProjectionTexture"));
-        if (ProjectionProp)
+        FObjectProperty* ObjProp = CastField<FObjectProperty>(CubemapProp);
+        if (!ObjProp)
         {
-            if (FObjectProperty* ObjProp = CastField<FObjectProperty>(ProjectionProp))
-            {
-                ObjProp->SetObjectPropertyValue(
-                    ProjectionProp->ContainerPtrToValuePtr<void>(Actor), Texture);
-                FPropertyChangedEvent PropEvent(ProjectionProp);
-                Actor->PostEditChangeProperty(PropEvent);
-            }
+            UE_LOG(LogTemp, Error, TEXT("ComfyUI HDR: Cubemap property is not an FObjectProperty"));
+            continue;
         }
+
+        ObjProp->SetObjectPropertyValue(
+            CubemapProp->ContainerPtrToValuePtr<void>(Actor), Texture);
+
+        FPropertyChangedEvent PropEvent(CubemapProp);
+        Actor->PostEditChangeProperty(PropEvent);
+        Actor->Modify();
+        BackdropsUpdated++;
+
+        UE_LOG(LogTemp, Warning, TEXT("ComfyUI HDR: Applied cubemap to HDRIBackdrop: %s"),
+            *Actor->GetName());
     }
 
     if (GEditor)
@@ -1297,6 +1320,107 @@ FString SComfyUIPanel::GetLocalTempFolder() const
 // Helpers
 // ============================================================================
 
+
+
+
+void SComfyUIPanel::StartHistoryPoller(const FString& PromptId, const FComfyWorkflowParams& Params)
+{
+    PollingPromptId = PromptId;
+
+    if (!GEditor) return;
+
+    FComfyWorkflowParams CapturedParams = Params;
+    TWeakPtr<SComfyUIPanel> CapturedWeakThis = WeakThis;
+
+    GEditor->GetTimerManager()->SetTimer(
+        PollingTimerHandle,
+        [CapturedWeakThis, PromptId, CapturedParams]()
+        {
+            TSharedPtr<SComfyUIPanel> Panel = CapturedWeakThis.Pin();
+            if (!Panel.IsValid()) return;
+
+            // If WS already handled this, stop polling
+            if (Panel->PollingPromptId != PromptId)
+            {
+                Panel->StopHistoryPoller();
+                return;
+            }
+
+            const UComfyUISettings* Settings = GetDefault<UComfyUISettings>();
+            FString BaseUrl = Settings ? Settings->BaseUrl : TEXT("http://127.0.0.1:8188");
+
+            TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
+            Request->SetURL(BaseUrl + TEXT("/history/") + PromptId);
+            Request->SetVerb(TEXT("GET"));
+
+            Request->OnProcessRequestComplete().BindLambda(
+                [CapturedWeakThis, PromptId, CapturedParams](FHttpRequestPtr, FHttpResponsePtr Response, bool bSucceeded)
+                {
+                    TSharedPtr<SComfyUIPanel> Panel = CapturedWeakThis.Pin();
+                    if (!Panel.IsValid()) return;
+
+                    // If WS already handled this prompt, bail
+                    if (Panel->PollingPromptId != PromptId) return;
+
+                    if (!bSucceeded || !Response.IsValid()) return;
+
+                    TSharedPtr<FJsonObject> History;
+                    const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Response->GetContentAsString());
+                    if (!FJsonSerializer::Deserialize(Reader, History) || !History.IsValid()) return;
+
+                    // Check if our prompt has a completed entry
+                    const TSharedPtr<FJsonObject>* PromptHistory;
+                    if (!History->TryGetObjectField(PromptId, PromptHistory)) return;
+
+                    // Check for execution error
+                    const TSharedPtr<FJsonObject>* StatusObj;
+                    if ((*PromptHistory)->TryGetObjectField(TEXT("status"), StatusObj))
+                    {
+                        FString StatusStr;
+                        if ((*StatusObj)->TryGetStringField(TEXT("status_str"), StatusStr))
+                        {
+                            if (StatusStr == TEXT("error"))
+                            {
+                                UE_LOG(LogTemp, Error, TEXT("ComfyUI Poller: Prompt %s errored"), *PromptId);
+                                Panel->StopHistoryPoller();
+                                Panel->OnWorkflowComplete(false, PromptId, CapturedParams);
+                                return;
+                            }
+                            // Not finished yet
+                            if (StatusStr != TEXT("success"))
+                                return;
+                        }
+                    }
+
+                    // Check outputs exist
+                    const TSharedPtr<FJsonObject>* Outputs;
+                    if (!(*PromptHistory)->TryGetObjectField(TEXT("outputs"), Outputs)) return;
+                    if ((*Outputs)->Values.Num() == 0) return;
+
+                    // Looks complete — hand off to OnWorkflowComplete
+                    UE_LOG(LogTemp, Warning, TEXT("ComfyUI Poller: Detected completion for prompt %s (WS fallback)"), *PromptId);
+                    Panel->StopHistoryPoller();
+                    Panel->OnWorkflowComplete(true, PromptId, CapturedParams);
+                });
+
+            Request->ProcessRequest();
+        },
+        5.0f,  // poll every 5 seconds
+        true   // looping
+    );
+
+    UE_LOG(LogTemp, Warning, TEXT("ComfyUI Poller: Started for prompt %s"), *PromptId);
+}
+
+void SComfyUIPanel::StopHistoryPoller()
+{
+    if (GEditor && PollingTimerHandle.IsValid())
+    {
+        GEditor->GetTimerManager()->ClearTimer(PollingTimerHandle);
+        UE_LOG(LogTemp, Warning, TEXT("ComfyUI Poller: Stopped"));
+    }
+    PollingPromptId = TEXT("");
+}
 bool SComfyUIPanel::LoadWorkflowFromFile(const FString& RelativePath, TSharedPtr<FJsonObject>& OutWorkflow)
 {
     FString WorkflowPath;
@@ -1379,6 +1503,9 @@ SComfyUIPanel::~SComfyUIPanel()
 {
     if (GEditor && ConnectionTimerHandle.IsValid())
         GEditor->GetTimerManager()->ClearTimer(ConnectionTimerHandle);
+
+    if (GEditor && PollingTimerHandle.IsValid())         
+        GEditor->GetTimerManager()->ClearTimer(PollingTimerHandle);
 
     auto CleanBrush = [](TSharedPtr<FSlateBrush>& Brush) {
         if (Brush.IsValid() && Brush->GetResourceObject())

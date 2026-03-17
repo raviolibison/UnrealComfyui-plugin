@@ -48,6 +48,7 @@ void FComfyUIWebSocketHandler::OnConnected()
 {
     UE_LOG(LogTemp, Warning, TEXT("ComfyUI WebSocket: Connected"));
     bIsConnected = true;
+	OnConnectedEvent.Broadcast();
 }
 
 void FComfyUIWebSocketHandler::OnConnectionError(const FString& Error)

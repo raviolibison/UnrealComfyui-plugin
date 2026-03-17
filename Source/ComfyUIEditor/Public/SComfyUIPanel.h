@@ -86,6 +86,8 @@ private:
 
     // Connection polling
     FTimerHandle ConnectionTimerHandle;
+    FTimerHandle PollingTimerHandle;
+    FString PollingPromptId;
 
     // Composure
     FString LastImportedImagePath;
@@ -96,10 +98,10 @@ private:
     FString ConvertImageToHDR(const FString& SourceImagePath);
 
     /** Import an .hdr file as a UTexture2D with HDR settings (no sRGB, HDR float). */
-    UTexture2D* ImportHDRToProject(const FString& HdrFilePath, const FString& AssetName);
+    UTextureCube* ImportHDRToProject(const FString& HdrFilePath, const FString& AssetName);
 
     /** Find the HDRIBackdrop actor in the current level and apply the given texture. */
-    void ApplyTextureToHDRIBackdrop(UTexture2D* Texture);
+    void ApplyTextureToHDRIBackdrop(UTextureCube* Texture);                                                               
 
     // -------------------------------------------------------------------------
     // Generic Workflow System
@@ -135,6 +137,8 @@ private:
     // Helpers
     // -------------------------------------------------------------------------
     void PollComfyConnection();
+    void StartHistoryPoller(const FString& PromptId, const FComfyWorkflowParams& Params);
+    void StopHistoryPoller();                                                               
     void UpdateStatus(const FString& Status);
     void LoadAndDisplayImage(const FString& FilePath, bool bPreviewB);
     void ImportImageToProject(const FString& ImagePath, const FString& AssetNamePrefix);
