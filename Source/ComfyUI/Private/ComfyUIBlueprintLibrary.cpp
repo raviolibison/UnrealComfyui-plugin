@@ -427,6 +427,338 @@ FString UComfyUIBlueprintLibrary::BuildFlux2WorkflowJson(const FComfyUIFlux2Work
     return OutputString;
 }
 
+FString UComfyUIBlueprintLibrary::BuildQwenGenerateWorkflowJson(const FComfyUIQwenGenerateParams& Params)
+{
+    // Load the template as a string and parse it
+    TSharedPtr<FJsonObject> Root = MakeShared<FJsonObject>();
+
+    // --- Node 245: UNETLoader ---
+    TSharedPtr<FJsonObject> Node245 = MakeShared<FJsonObject>();
+    TSharedPtr<FJsonObject> Node245Inputs = MakeShared<FJsonObject>();
+    Node245Inputs->SetStringField(TEXT("unet_name"), Params.UnetName);
+    Node245Inputs->SetStringField(TEXT("weight_dtype"), TEXT("default"));
+    Node245->SetObjectField(TEXT("inputs"), Node245Inputs);
+    Node245->SetStringField(TEXT("class_type"), TEXT("UNETLoader"));
+    Root->SetObjectField(TEXT("245"), Node245);
+
+    // --- Node 246: CLIPLoader ---
+    TSharedPtr<FJsonObject> Node246 = MakeShared<FJsonObject>();
+    TSharedPtr<FJsonObject> Node246Inputs = MakeShared<FJsonObject>();
+    Node246Inputs->SetStringField(TEXT("clip_name"), Params.ClipName);
+    Node246Inputs->SetStringField(TEXT("type"), TEXT("qwen_image"));
+    Node246Inputs->SetStringField(TEXT("device"), TEXT("default"));
+    Node246->SetObjectField(TEXT("inputs"), Node246Inputs);
+    Node246->SetStringField(TEXT("class_type"), TEXT("CLIPLoader"));
+    Root->SetObjectField(TEXT("246"), Node246);
+
+    // --- Node 247: VAELoader ---
+    TSharedPtr<FJsonObject> Node247 = MakeShared<FJsonObject>();
+    TSharedPtr<FJsonObject> Node247Inputs = MakeShared<FJsonObject>();
+    Node247Inputs->SetStringField(TEXT("vae_name"), Params.VaeName);
+    Node247->SetObjectField(TEXT("inputs"), Node247Inputs);
+    Node247->SetStringField(TEXT("class_type"), TEXT("VAELoader"));
+    Root->SetObjectField(TEXT("247"), Node247);
+
+    // --- Node 248: EmptySD3LatentImage ---
+    TSharedPtr<FJsonObject> Node248 = MakeShared<FJsonObject>();
+    TSharedPtr<FJsonObject> Node248Inputs = MakeShared<FJsonObject>();
+    Node248Inputs->SetNumberField(TEXT("width"), Params.Width);
+    Node248Inputs->SetNumberField(TEXT("height"), Params.Height);
+    Node248Inputs->SetNumberField(TEXT("batch_size"), 1);
+    Node248->SetObjectField(TEXT("inputs"), Node248Inputs);
+    Node248->SetStringField(TEXT("class_type"), TEXT("EmptySD3LatentImage"));
+    Root->SetObjectField(TEXT("248"), Node248);
+
+    // --- Node 249: CLIPTextEncode (Positive) ---
+    TSharedPtr<FJsonObject> Node249 = MakeShared<FJsonObject>();
+    TSharedPtr<FJsonObject> Node249Inputs = MakeShared<FJsonObject>();
+    Node249Inputs->SetStringField(TEXT("text"), Params.PositivePrompt);
+    TArray<TSharedPtr<FJsonValue>> Clip249Val;
+    Clip249Val.Add(MakeShared<FJsonValueString>(TEXT("246")));
+    Clip249Val.Add(MakeShared<FJsonValueNumber>(0));
+    Node249Inputs->SetArrayField(TEXT("clip"), Clip249Val);
+    Node249->SetObjectField(TEXT("inputs"), Node249Inputs);
+    Node249->SetStringField(TEXT("class_type"), TEXT("CLIPTextEncode"));
+    Root->SetObjectField(TEXT("249"), Node249);
+
+    // --- Node 250: CLIPTextEncode (Negative) --- empty for Qwen
+    TSharedPtr<FJsonObject> Node250 = MakeShared<FJsonObject>();
+    TSharedPtr<FJsonObject> Node250Inputs = MakeShared<FJsonObject>();
+    Node250Inputs->SetStringField(TEXT("text"), TEXT(""));
+    TArray<TSharedPtr<FJsonValue>> Clip250Val;
+    Clip250Val.Add(MakeShared<FJsonValueString>(TEXT("246")));
+    Clip250Val.Add(MakeShared<FJsonValueNumber>(0));
+    Node250Inputs->SetArrayField(TEXT("clip"), Clip250Val);
+    Node250->SetObjectField(TEXT("inputs"), Node250Inputs);
+    Node250->SetStringField(TEXT("class_type"), TEXT("CLIPTextEncode"));
+    Root->SetObjectField(TEXT("250"), Node250);
+
+    // --- Node 251: PrimitiveInt (Steps) ---
+    TSharedPtr<FJsonObject> Node251 = MakeShared<FJsonObject>();
+    TSharedPtr<FJsonObject> Node251Inputs = MakeShared<FJsonObject>();
+    Node251Inputs->SetNumberField(TEXT("value"), Params.Steps);
+    Node251->SetObjectField(TEXT("inputs"), Node251Inputs);
+    Node251->SetStringField(TEXT("class_type"), TEXT("PrimitiveInt"));
+    Root->SetObjectField(TEXT("251"), Node251);
+
+    // --- Node 252: PrimitiveFloat (CFG) ---
+    TSharedPtr<FJsonObject> Node252 = MakeShared<FJsonObject>();
+    TSharedPtr<FJsonObject> Node252Inputs = MakeShared<FJsonObject>();
+    Node252Inputs->SetNumberField(TEXT("value"), Params.CFGScale);
+    Node252->SetObjectField(TEXT("inputs"), Node252Inputs);
+    Node252->SetStringField(TEXT("class_type"), TEXT("PrimitiveFloat"));
+    Root->SetObjectField(TEXT("252"), Node252);
+
+    // --- Node 260: ModelSamplingAuraFlow (Shift) ---
+    TSharedPtr<FJsonObject> Node260 = MakeShared<FJsonObject>();
+    TSharedPtr<FJsonObject> Node260Inputs = MakeShared<FJsonObject>();
+    Node260Inputs->SetNumberField(TEXT("shift"), Params.Shift);
+    TArray<TSharedPtr<FJsonValue>> Model260Val;
+    Model260Val.Add(MakeShared<FJsonValueString>(TEXT("245")));
+    Model260Val.Add(MakeShared<FJsonValueNumber>(0));
+    Node260Inputs->SetArrayField(TEXT("model"), Model260Val);
+    Node260->SetObjectField(TEXT("inputs"), Node260Inputs);
+    Node260->SetStringField(TEXT("class_type"), TEXT("ModelSamplingAuraFlow"));
+    Root->SetObjectField(TEXT("260"), Node260);
+
+    // --- Node 261: KSampler ---
+    TSharedPtr<FJsonObject> Node261 = MakeShared<FJsonObject>();
+    TSharedPtr<FJsonObject> Node261Inputs = MakeShared<FJsonObject>();
+    int32 ActualSeed = Params.Seed < 0 ? FMath::Rand() : Params.Seed;
+    Node261Inputs->SetNumberField(TEXT("seed"), ActualSeed);
+    TArray<TSharedPtr<FJsonValue>> StepsRef, CfgRef, ModelRef, PosRef, NegRef, LatentRef;
+    StepsRef.Add(MakeShared<FJsonValueString>(TEXT("251"))); StepsRef.Add(MakeShared<FJsonValueNumber>(0));
+    CfgRef.Add(MakeShared<FJsonValueString>(TEXT("252")));   CfgRef.Add(MakeShared<FJsonValueNumber>(0));
+    ModelRef.Add(MakeShared<FJsonValueString>(TEXT("260"))); ModelRef.Add(MakeShared<FJsonValueNumber>(0));
+    PosRef.Add(MakeShared<FJsonValueString>(TEXT("249")));   PosRef.Add(MakeShared<FJsonValueNumber>(0));
+    NegRef.Add(MakeShared<FJsonValueString>(TEXT("250")));   NegRef.Add(MakeShared<FJsonValueNumber>(0));
+    LatentRef.Add(MakeShared<FJsonValueString>(TEXT("248"))); LatentRef.Add(MakeShared<FJsonValueNumber>(0));
+    Node261Inputs->SetArrayField(TEXT("steps"), StepsRef);
+    Node261Inputs->SetArrayField(TEXT("cfg"), CfgRef);
+    Node261Inputs->SetStringField(TEXT("sampler_name"), Params.Sampler);
+    Node261Inputs->SetStringField(TEXT("scheduler"), Params.Scheduler);
+    Node261Inputs->SetNumberField(TEXT("denoise"), 1.0);
+    Node261Inputs->SetArrayField(TEXT("model"), ModelRef);
+    Node261Inputs->SetArrayField(TEXT("positive"), PosRef);
+    Node261Inputs->SetArrayField(TEXT("negative"), NegRef);
+    Node261Inputs->SetArrayField(TEXT("latent_image"), LatentRef);
+    Node261->SetObjectField(TEXT("inputs"), Node261Inputs);
+    Node261->SetStringField(TEXT("class_type"), TEXT("KSampler"));
+    Root->SetObjectField(TEXT("261"), Node261);
+
+    // --- Node 262: VAEDecode ---
+    TSharedPtr<FJsonObject> Node262 = MakeShared<FJsonObject>();
+    TSharedPtr<FJsonObject> Node262Inputs = MakeShared<FJsonObject>();
+    TArray<TSharedPtr<FJsonValue>> Samples262, Vae262;
+    Samples262.Add(MakeShared<FJsonValueString>(TEXT("261"))); Samples262.Add(MakeShared<FJsonValueNumber>(0));
+    Vae262.Add(MakeShared<FJsonValueString>(TEXT("247")));     Vae262.Add(MakeShared<FJsonValueNumber>(0));
+    Node262Inputs->SetArrayField(TEXT("samples"), Samples262);
+    Node262Inputs->SetArrayField(TEXT("vae"), Vae262);
+    Node262->SetObjectField(TEXT("inputs"), Node262Inputs);
+    Node262->SetStringField(TEXT("class_type"), TEXT("VAEDecode"));
+    Root->SetObjectField(TEXT("262"), Node262);
+
+    // --- Node 60: SaveImage ---
+    TSharedPtr<FJsonObject> Node60 = MakeShared<FJsonObject>();
+    TSharedPtr<FJsonObject> Node60Inputs = MakeShared<FJsonObject>();
+    Node60Inputs->SetStringField(TEXT("filename_prefix"), Params.FilenamePrefix);
+    TArray<TSharedPtr<FJsonValue>> Images60;
+    Images60.Add(MakeShared<FJsonValueString>(TEXT("262"))); Images60.Add(MakeShared<FJsonValueNumber>(0));
+    Node60Inputs->SetArrayField(TEXT("images"), Images60);
+    Node60->SetObjectField(TEXT("inputs"), Node60Inputs);
+    Node60->SetStringField(TEXT("class_type"), TEXT("SaveImage"));
+    Root->SetObjectField(TEXT("60"), Node60);
+
+    // Serialize
+    FString OutputJson;
+    TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&OutputJson);
+    FJsonSerializer::Serialize(Root.ToSharedRef(), Writer);
+    return OutputJson;
+}
+
+
+FString UComfyUIBlueprintLibrary::BuildQwenEditWorkflowJson(const FComfyUIQwenEditParams& Params)
+{
+    TSharedPtr<FJsonObject> Root = MakeShared<FJsonObject>();
+
+    // --- Node 41: LoadImage (source) ---
+    TSharedPtr<FJsonObject> Node41 = MakeShared<FJsonObject>();
+    TSharedPtr<FJsonObject> Node41Inputs = MakeShared<FJsonObject>();
+    Node41Inputs->SetStringField(TEXT("image"), Params.InputImageFilename);
+    Node41->SetObjectField(TEXT("inputs"), Node41Inputs);
+    Node41->SetStringField(TEXT("class_type"), TEXT("LoadImage"));
+    Root->SetObjectField(TEXT("41"), Node41);
+
+    // --- Node 171: FluxKontextImageScale ---
+    TSharedPtr<FJsonObject> Node171 = MakeShared<FJsonObject>();
+    TSharedPtr<FJsonObject> Node171Inputs = MakeShared<FJsonObject>();
+    TArray<TSharedPtr<FJsonValue>> Image171;
+    Image171.Add(MakeShared<FJsonValueString>(TEXT("41"))); Image171.Add(MakeShared<FJsonValueNumber>(0));
+    Node171Inputs->SetArrayField(TEXT("image"), Image171);
+    Node171->SetObjectField(TEXT("inputs"), Node171Inputs);
+    Node171->SetStringField(TEXT("class_type"), TEXT("FluxKontextImageScale"));
+    Root->SetObjectField(TEXT("171"), Node171);
+
+    // --- Node 172: VAELoader ---
+    TSharedPtr<FJsonObject> Node172 = MakeShared<FJsonObject>();
+    TSharedPtr<FJsonObject> Node172Inputs = MakeShared<FJsonObject>();
+    Node172Inputs->SetStringField(TEXT("vae_name"), Params.VaeName);
+    Node172->SetObjectField(TEXT("inputs"), Node172Inputs);
+    Node172->SetStringField(TEXT("class_type"), TEXT("VAELoader"));
+    Root->SetObjectField(TEXT("172"), Node172);
+
+    // --- Node 173: CLIPLoader ---
+    TSharedPtr<FJsonObject> Node173 = MakeShared<FJsonObject>();
+    TSharedPtr<FJsonObject> Node173Inputs = MakeShared<FJsonObject>();
+    Node173Inputs->SetStringField(TEXT("clip_name"), Params.ClipName);
+    Node173Inputs->SetStringField(TEXT("type"), TEXT("qwen_image"));
+    Node173Inputs->SetStringField(TEXT("device"), TEXT("default"));
+    Node173->SetObjectField(TEXT("inputs"), Node173Inputs);
+    Node173->SetStringField(TEXT("class_type"), TEXT("CLIPLoader"));
+    Root->SetObjectField(TEXT("173"), Node173);
+
+    // --- Node 174: UNETLoader ---
+    TSharedPtr<FJsonObject> Node174 = MakeShared<FJsonObject>();
+    TSharedPtr<FJsonObject> Node174Inputs = MakeShared<FJsonObject>();
+    Node174Inputs->SetStringField(TEXT("unet_name"), Params.UnetName);
+    Node174Inputs->SetStringField(TEXT("weight_dtype"), TEXT("default"));
+    Node174->SetObjectField(TEXT("inputs"), Node174Inputs);
+    Node174->SetStringField(TEXT("class_type"), TEXT("UNETLoader"));
+    Root->SetObjectField(TEXT("174"), Node174);
+
+    // Helper lambdas for node refs
+    auto MakeRef = [](const FString& NodeId, int32 Output) {
+        TArray<TSharedPtr<FJsonValue>> Ref;
+        Ref.Add(MakeShared<FJsonValueString>(NodeId));
+        Ref.Add(MakeShared<FJsonValueNumber>(Output));
+        return Ref;
+        };
+
+    // --- Node 175: TextEncodeQwenImageEditPlus (Positive) ---
+    TSharedPtr<FJsonObject> Node175 = MakeShared<FJsonObject>();
+    TSharedPtr<FJsonObject> Node175Inputs = MakeShared<FJsonObject>();
+    Node175Inputs->SetStringField(TEXT("prompt"), Params.Instruction);
+    Node175Inputs->SetArrayField(TEXT("clip"), MakeRef(TEXT("173"), 0));
+    Node175Inputs->SetArrayField(TEXT("vae"), MakeRef(TEXT("172"), 0));
+    Node175Inputs->SetArrayField(TEXT("image1"), MakeRef(TEXT("171"), 0));
+    Node175->SetObjectField(TEXT("inputs"), Node175Inputs);
+    Node175->SetStringField(TEXT("class_type"), TEXT("TextEncodeQwenImageEditPlus"));
+    Root->SetObjectField(TEXT("175"), Node175);
+
+    // --- Node 176: TextEncodeQwenImageEditPlus (Negative) --- empty prompt
+    TSharedPtr<FJsonObject> Node176 = MakeShared<FJsonObject>();
+    TSharedPtr<FJsonObject> Node176Inputs = MakeShared<FJsonObject>();
+    Node176Inputs->SetStringField(TEXT("prompt"), TEXT(""));
+    Node176Inputs->SetArrayField(TEXT("clip"), MakeRef(TEXT("173"), 0));
+    Node176Inputs->SetArrayField(TEXT("vae"), MakeRef(TEXT("172"), 0));
+    Node176Inputs->SetArrayField(TEXT("image1"), MakeRef(TEXT("171"), 0));
+    Node176->SetObjectField(TEXT("inputs"), Node176Inputs);
+    Node176->SetStringField(TEXT("class_type"), TEXT("TextEncodeQwenImageEditPlus"));
+    Root->SetObjectField(TEXT("176"), Node176);
+
+    // --- Node 177: ModelSamplingAuraFlow (Shift) ---
+    TSharedPtr<FJsonObject> Node177 = MakeShared<FJsonObject>();
+    TSharedPtr<FJsonObject> Node177Inputs = MakeShared<FJsonObject>();
+    Node177Inputs->SetNumberField(TEXT("shift"), Params.Shift);
+    Node177Inputs->SetArrayField(TEXT("model"), MakeRef(TEXT("174"), 0));
+    Node177->SetObjectField(TEXT("inputs"), Node177Inputs);
+    Node177->SetStringField(TEXT("class_type"), TEXT("ModelSamplingAuraFlow"));
+    Root->SetObjectField(TEXT("177"), Node177);
+
+    // --- Node 178: CFGNorm ---
+    TSharedPtr<FJsonObject> Node178 = MakeShared<FJsonObject>();
+    TSharedPtr<FJsonObject> Node178Inputs = MakeShared<FJsonObject>();
+    Node178Inputs->SetNumberField(TEXT("strength"), 1.0);
+    Node178Inputs->SetArrayField(TEXT("model"), MakeRef(TEXT("177"), 0));
+    Node178->SetObjectField(TEXT("inputs"), Node178Inputs);
+    Node178->SetStringField(TEXT("class_type"), TEXT("CFGNorm"));
+    Root->SetObjectField(TEXT("178"), Node178);
+
+    // --- Node 179: FluxKontextMultiReferenceLatentMethod (Positive) ---
+    TSharedPtr<FJsonObject> Node179 = MakeShared<FJsonObject>();
+    TSharedPtr<FJsonObject> Node179Inputs = MakeShared<FJsonObject>();
+    Node179Inputs->SetStringField(TEXT("reference_latents_method"), TEXT("index_timestep_zero"));
+    Node179Inputs->SetArrayField(TEXT("conditioning"), MakeRef(TEXT("175"), 0));
+    Node179->SetObjectField(TEXT("inputs"), Node179Inputs);
+    Node179->SetStringField(TEXT("class_type"), TEXT("FluxKontextMultiReferenceLatentMethod"));
+    Root->SetObjectField(TEXT("179"), Node179);
+
+    // --- Node 180: FluxKontextMultiReferenceLatentMethod (Negative) ---
+    TSharedPtr<FJsonObject> Node180 = MakeShared<FJsonObject>();
+    TSharedPtr<FJsonObject> Node180Inputs = MakeShared<FJsonObject>();
+    Node180Inputs->SetStringField(TEXT("reference_latents_method"), TEXT("index_timestep_zero"));
+    Node180Inputs->SetArrayField(TEXT("conditioning"), MakeRef(TEXT("176"), 0));
+    Node180->SetObjectField(TEXT("inputs"), Node180Inputs);
+    Node180->SetStringField(TEXT("class_type"), TEXT("FluxKontextMultiReferenceLatentMethod"));
+    Root->SetObjectField(TEXT("180"), Node180);
+
+    // --- Node 181: PrimitiveInt (Steps) ---
+    TSharedPtr<FJsonObject> Node181 = MakeShared<FJsonObject>();
+    TSharedPtr<FJsonObject> Node181Inputs = MakeShared<FJsonObject>();
+    Node181Inputs->SetNumberField(TEXT("value"), Params.Steps);
+    Node181->SetObjectField(TEXT("inputs"), Node181Inputs);
+    Node181->SetStringField(TEXT("class_type"), TEXT("PrimitiveInt"));
+    Root->SetObjectField(TEXT("181"), Node181);
+
+    // --- Node 182: PrimitiveFloat (CFG) ---
+    TSharedPtr<FJsonObject> Node182 = MakeShared<FJsonObject>();
+    TSharedPtr<FJsonObject> Node182Inputs = MakeShared<FJsonObject>();
+    Node182Inputs->SetNumberField(TEXT("value"), Params.CFGScale);
+    Node182->SetObjectField(TEXT("inputs"), Node182Inputs);
+    Node182->SetStringField(TEXT("class_type"), TEXT("PrimitiveFloat"));
+    Root->SetObjectField(TEXT("182"), Node182);
+
+    // --- Node 183: KSampler ---
+    TSharedPtr<FJsonObject> Node183 = MakeShared<FJsonObject>();
+    TSharedPtr<FJsonObject> Node183Inputs = MakeShared<FJsonObject>();
+    int32 ActualSeed = Params.Seed < 0 ? FMath::Rand() : Params.Seed;
+    Node183Inputs->SetNumberField(TEXT("seed"), ActualSeed);
+    Node183Inputs->SetArrayField(TEXT("steps"), MakeRef(TEXT("181"), 0));
+    Node183Inputs->SetArrayField(TEXT("cfg"), MakeRef(TEXT("182"), 0));
+    Node183Inputs->SetStringField(TEXT("sampler_name"), Params.Sampler);
+    Node183Inputs->SetStringField(TEXT("scheduler"), Params.Scheduler);
+    Node183Inputs->SetNumberField(TEXT("denoise"), 1.0);
+    Node183Inputs->SetArrayField(TEXT("model"), MakeRef(TEXT("178"), 0));
+    Node183Inputs->SetArrayField(TEXT("positive"), MakeRef(TEXT("179"), 0));
+    Node183Inputs->SetArrayField(TEXT("negative"), MakeRef(TEXT("180"), 0));
+    Node183Inputs->SetArrayField(TEXT("latent_image"), MakeRef(TEXT("186"), 0));
+    Node183->SetObjectField(TEXT("inputs"), Node183Inputs);
+    Node183->SetStringField(TEXT("class_type"), TEXT("KSampler"));
+    Root->SetObjectField(TEXT("183"), Node183);
+
+    // --- Node 184: VAEDecode ---
+    TSharedPtr<FJsonObject> Node184 = MakeShared<FJsonObject>();
+    TSharedPtr<FJsonObject> Node184Inputs = MakeShared<FJsonObject>();
+    Node184Inputs->SetArrayField(TEXT("samples"), MakeRef(TEXT("183"), 0));
+    Node184Inputs->SetArrayField(TEXT("vae"), MakeRef(TEXT("172"), 0));
+    Node184->SetObjectField(TEXT("inputs"), Node184Inputs);
+    Node184->SetStringField(TEXT("class_type"), TEXT("VAEDecode"));
+    Root->SetObjectField(TEXT("184"), Node184);
+
+    // --- Node 186: VAEEncode ---
+    TSharedPtr<FJsonObject> Node186 = MakeShared<FJsonObject>();
+    TSharedPtr<FJsonObject> Node186Inputs = MakeShared<FJsonObject>();
+    Node186Inputs->SetArrayField(TEXT("pixels"), MakeRef(TEXT("171"), 0));
+    Node186->SetObjectField(TEXT("inputs"), Node186Inputs);
+    Node186->SetStringField(TEXT("class_type"), TEXT("VAEEncode"));
+    Root->SetObjectField(TEXT("186"), Node186);
+
+    // --- Node 9: SaveImage ---
+    TSharedPtr<FJsonObject> Node9 = MakeShared<FJsonObject>();
+    TSharedPtr<FJsonObject> Node9Inputs = MakeShared<FJsonObject>();
+    Node9Inputs->SetStringField(TEXT("filename_prefix"), Params.FilenamePrefix);
+    Node9Inputs->SetArrayField(TEXT("images"), MakeRef(TEXT("184"), 0));
+    Node9->SetObjectField(TEXT("inputs"), Node9Inputs);
+    Node9->SetStringField(TEXT("class_type"), TEXT("SaveImage"));
+    Root->SetObjectField(TEXT("9"), Node9);
+
+    // Serialize
+    FString OutputJson;
+    TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&OutputJson);
+    FJsonSerializer::Serialize(Root.ToSharedRef(), Writer);
+    return OutputJson;
+}
+
 // ============================================================================
 // Image Loading
 // ============================================================================

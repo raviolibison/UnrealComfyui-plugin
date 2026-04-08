@@ -35,6 +35,12 @@ public:
     UFUNCTION(BlueprintCallable, Category = "ComfyUI")
     static FString BuildFlux2WorkflowJson(const FComfyUIFlux2WorkflowParams& Params);
 
+    UFUNCTION(BlueprintCallable, Category = "ComfyUI")
+    static FString BuildQwenGenerateWorkflowJson(const FComfyUIQwenGenerateParams& Params);
+
+    UFUNCTION(BlueprintCallable, Category = "ComfyUI")
+    static FString BuildQwenEditWorkflowJson(const FComfyUIQwenEditParams& Params);
+
     // --- Image Loading ---
 
     UFUNCTION(BlueprintCallable, Category = "ComfyUI")

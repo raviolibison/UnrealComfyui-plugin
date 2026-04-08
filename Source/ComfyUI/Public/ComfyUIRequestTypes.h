@@ -96,6 +96,107 @@ struct FComfyUIFlux2WorkflowParams
     FString FilenamePrefix = TEXT("UE_Flux2");
 };
 
+UENUM(BlueprintType)
+enum class EComfyUIModelFamily : uint8
+{
+    Flux    UMETA(DisplayName = "Flux"),
+    Qwen    UMETA(DisplayName = "Qwen")
+};
+
+USTRUCT(BlueprintType)
+struct FComfyUIQwenGenerateParams
+{
+    GENERATED_BODY()
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ComfyUI")
+    FString PositivePrompt;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ComfyUI")
+    FString UnetName = TEXT("qwen_image_2512_fp8_e4m3fn.safetensors");
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ComfyUI")
+    FString ClipName = TEXT("qwen_2.5_vl_7b_fp8_scaled.safetensors");
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ComfyUI")
+    FString VaeName = TEXT("qwen_image_vae.safetensors");
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ComfyUI")
+    int32 Steps = 20;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ComfyUI")
+    float CFGScale = 4.0f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ComfyUI")
+    float Shift = 7.0f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ComfyUI")
+    int32 Width = 1024;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ComfyUI")
+    int32 Height = 1024;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ComfyUI")
+    int32 Seed = -1;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ComfyUI")
+    FString Sampler = TEXT("euler");
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ComfyUI")
+    FString Scheduler = TEXT("simple");
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ComfyUI")
+    FString FilenamePrefix = TEXT("UE_Qwen");
+};
+
+// Qwen-Image-Edit-2511 (image to image / instruction editing)
+USTRUCT(BlueprintType)
+struct FComfyUIQwenEditParams
+{
+    GENERATED_BODY()
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ComfyUI")
+    FString Instruction;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ComfyUI")
+    FString InputImageFilename; // filename on ComfyUI server after upload
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ComfyUI")
+    FString UnetName = TEXT("qwen_image_edit_2511_fp8mixed.safetensors");
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ComfyUI")
+    FString ClipName = TEXT("qwen_2.5_vl_7b_fp8_scaled.safetensors");
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ComfyUI")
+    FString VaeName = TEXT("qwen_image_vae.safetensors");
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ComfyUI")
+    int32 Steps = 20;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ComfyUI")
+    float CFGScale = 4.0f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ComfyUI")
+    float Shift = 7.0f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ComfyUI")
+    int32 Width = 1024;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ComfyUI")
+    int32 Height = 1024;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ComfyUI")
+    int32 Seed = -1;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ComfyUI")
+    FString Sampler = TEXT("dpmpp_2m");
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ComfyUI")
+    FString Scheduler = TEXT("karras");
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ComfyUI")
+    FString FilenamePrefix = TEXT("UE_QwenEdit");
+};
+
 USTRUCT(BlueprintType)
 struct FComfyUISubmitOptions
 {

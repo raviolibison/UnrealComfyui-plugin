@@ -69,6 +69,11 @@ private:
 
     TWeakPtr<SComfyUIPanel> WeakThis;
 
+    // Model family selector
+    EComfyUIModelFamily SelectedModelFamily = EComfyUIModelFamily::Flux;
+    TArray<TSharedPtr<FString>> ModelFamilyOptions;
+    TSharedPtr<FString> SelectedModelFamilyOption;
+
     // Resolution controls
     TArray<TSharedPtr<FString>> WidthOptions;
     TArray<TSharedPtr<FString>> HeightOptions;
@@ -132,6 +137,7 @@ private:
     void OnHeightChanged(TSharedPtr<FString> NewSelection, ESelectInfo::Type SelectInfo);
     void OnCustomWidthChanged(int32 NewValue);
     void OnCustomHeightChanged(int32 NewValue);
+    void OnModelFamilyChanged(TSharedPtr<FString> NewSelection, ESelectInfo::Type SelectInfo);
 
     // -------------------------------------------------------------------------
     // Helpers

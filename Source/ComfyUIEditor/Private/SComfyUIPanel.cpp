@@ -55,6 +55,11 @@ void SComfyUIPanel::Construct(const FArguments& InArgs)
     HeightOptions.Add(MakeShared<FString>(TEXT("Custom")));
     SelectedHeight = HeightOptions[2];
 
+    // Model family options
+    ModelFamilyOptions.Add(MakeShared<FString>(TEXT("Flux")));
+    ModelFamilyOptions.Add(MakeShared<FString>(TEXT("Qwen")));
+    SelectedModelFamilyOption = ModelFamilyOptions[0];
+
     StatusText = TEXT("Connecting...");
     WeakThis = SharedThis(this);
 
@@ -162,6 +167,27 @@ void SComfyUIPanel::Construct(const FArguments& InArgs)
                     .MinValue(64).MaxValue(8192).MinDesiredValueWidth(100)
                 ]
             ]
+
+            // --- Model Family ---
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 5, 0, 10)
+                [
+                    SNew(SHorizontalBox)
+                        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
+                        [SNew(STextBlock).Text(LOCTEXT("ModelFamilyLabel", "Model: "))]
+                        + SHorizontalBox::Slot().Padding(10, 0, 0, 0).AutoWidth()
+                        [
+                            SNew(SComboBox<TSharedPtr<FString>>)
+                                .OptionsSource(&ModelFamilyOptions)
+                                .OnSelectionChanged(this, &SComfyUIPanel::OnModelFamilyChanged)
+                                .OnGenerateWidget_Lambda([](TSharedPtr<FString> Item) {
+                                return SNew(STextBlock).Text(FText::FromString(*Item));
+                                    })
+                                .InitiallySelectedItem(SelectedModelFamilyOption)
+                                [SNew(STextBlock).Text_Lambda([this]() {
+                                return FText::FromString(*SelectedModelFamilyOption);
+                                    })]
+                        ]
+                ]
 
             // --- Generate / Browse ---
             + SVerticalBox::Slot().AutoHeight().Padding(0,15,0,5)
@@ -601,69 +627,95 @@ void SComfyUIPanel::OnWorkflowComplete(bool bSuccess, const FString& PromptId, F
 
 void SComfyUIPanel::StartGeneration()
 {
-    int32 Width  = (*SelectedWidth  == TEXT("Custom")) ? CustomWidth  : FCString::Atoi(**SelectedWidth);
+    int32 Width = (*SelectedWidth == TEXT("Custom")) ? CustomWidth : FCString::Atoi(**SelectedWidth);
     int32 Height = (*SelectedHeight == TEXT("Custom")) ? CustomHeight : FCString::Atoi(**SelectedHeight);
 
-    FComfyUIFlux2WorkflowParams FluxParams;
-    FluxParams.PositivePrompt = PromptText;
-    FluxParams.NegativePrompt = NegativePromptText;
-    FluxParams.Width          = Width;
-    FluxParams.Height         = Height;
-    FluxParams.FilenamePrefix = CurrentFilenamePrefix;
-    FluxParams.Seed           = FMath::Abs((int32)(FDateTime::Now().GetTicks() % MAX_int32));
-
     FComfyWorkflowParams WorkflowParams;
-    WorkflowParams.WorkflowJson    = UComfyUIBlueprintLibrary::BuildFlux2WorkflowJson(FluxParams);
-    WorkflowParams.OutputPrefix    = CurrentFilenamePrefix;
-    WorkflowParams.RunningStatus   = TEXT("Generating image...");
-    WorkflowParams.CompleteStatus  = TEXT("Done! Import to project or run Img2Img.");
-    WorkflowParams.bUpdatePreview  = true;
-    WorkflowParams.bAutoImport     = false;
+    WorkflowParams.OutputPrefix = CurrentFilenamePrefix;
+    WorkflowParams.RunningStatus = TEXT("Generating image...");
+    WorkflowParams.CompleteStatus = TEXT("Done! Import to project or run Img2Img.");
+    WorkflowParams.bUpdatePreview = true;
+    WorkflowParams.bAutoImport = false;
     WorkflowParams.bTargetPreviewB = false;
+
+    if (SelectedModelFamily == EComfyUIModelFamily::Qwen)
+    {
+        FComfyUIQwenGenerateParams QwenParams;
+        QwenParams.PositivePrompt = PromptText;
+        QwenParams.Width = Width;
+        QwenParams.Height = Height;
+        QwenParams.FilenamePrefix = CurrentFilenamePrefix;
+        QwenParams.Seed = FMath::Abs((int32)(FDateTime::Now().GetTicks() % MAX_int32));
+        WorkflowParams.WorkflowJson = UComfyUIBlueprintLibrary::BuildQwenGenerateWorkflowJson(QwenParams);
+    }
+    else
+    {
+        FComfyUIFlux2WorkflowParams FluxParams;
+        FluxParams.PositivePrompt = PromptText;
+        FluxParams.NegativePrompt = NegativePromptText;
+        FluxParams.Width = Width;
+        FluxParams.Height = Height;
+        FluxParams.FilenamePrefix = CurrentFilenamePrefix;
+        FluxParams.Seed = FMath::Abs((int32)(FDateTime::Now().GetTicks() % MAX_int32));
+        WorkflowParams.WorkflowJson = UComfyUIBlueprintLibrary::BuildFlux2WorkflowJson(FluxParams);
+    }
 
     SubmitWorkflow(WorkflowParams);
 }
 
 void SComfyUIPanel::StartImg2Img()
 {
-    TSharedPtr<FJsonObject> WorkflowObj;
-    if (!LoadWorkflowFromFile(TEXT("workflows/img2img-API.json"), WorkflowObj))
-    {
-        UpdateStatus(TEXT("Error: img2img workflow file not found"));
-        return;
-    }
-
-    // PreviewImagePathA is always the source — either a downloaded result or a browsed+uploaded image
-    FString Filename = FPaths::GetCleanFilename(PreviewImagePathA);
-
-    // Images uploaded via /upload/image land in ComfyUI's input folder
-    // Images that came from /view (generated outputs) need [output] suffix
-    // We track this by whether the local path is in our temp folder
-    bool bIsDownloadedOutput = PreviewImagePathA.StartsWith(GetLocalTempFolder());
-    FString NodeImageValue = bIsDownloadedOutput
-        ? Filename + TEXT(" [output]")
-        : Filename;
-
-    if (TSharedPtr<FJsonObject> ImageNode = WorkflowObj->GetObjectField(TEXT("32")))
-        ImageNode->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("image"), NodeImageValue);
-
-    if (TSharedPtr<FJsonObject> PromptNode = WorkflowObj->GetObjectField(TEXT("2")))
-        PromptNode->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("text"), Img2ImgPromptText);
-
-    if (TSharedPtr<FJsonObject> SeedNode = WorkflowObj->GetObjectField(TEXT("16")))
-    {
-        int32 NewSeed = FMath::Abs((int32)(FDateTime::Now().GetTicks() % MAX_int32));
-        SeedNode->GetObjectField(TEXT("inputs"))->SetNumberField(TEXT("seed"), NewSeed);
-    }
-
     FComfyWorkflowParams WorkflowParams;
-    WorkflowParams.WorkflowJson    = SerializeWorkflow(WorkflowObj);
-    WorkflowParams.OutputPrefix    = TEXT("Flux2-Klein-Edit");
-    WorkflowParams.RunningStatus   = TEXT("Running img2img...");
-    WorkflowParams.CompleteStatus  = TEXT("Img2Img complete! Import to project or run again.");
-    WorkflowParams.bUpdatePreview  = true;
-    WorkflowParams.bAutoImport     = false;
+    WorkflowParams.OutputPrefix = TEXT("Edit");
+    WorkflowParams.RunningStatus = TEXT("Running img2img...");
+    WorkflowParams.CompleteStatus = TEXT("Edit complete! Import to project or run again.");
+    WorkflowParams.bUpdatePreview = true;
+    WorkflowParams.bAutoImport = false;
     WorkflowParams.bTargetPreviewB = true;
+
+    if (SelectedModelFamily == EComfyUIModelFamily::Qwen)
+    {
+        FString Filename = FPaths::GetCleanFilename(PreviewImagePathA);
+        bool bIsDownloadedOutput = PreviewImagePathA.StartsWith(GetLocalTempFolder());
+        FString NodeImageValue = bIsDownloadedOutput
+            ? Filename + TEXT(" [output]")
+            : Filename;
+
+        FComfyUIQwenEditParams QwenParams;
+        QwenParams.Instruction = Img2ImgPromptText;
+        QwenParams.InputImageFilename = NodeImageValue;
+        QwenParams.Seed = FMath::Abs((int32)(FDateTime::Now().GetTicks() % MAX_int32));
+        WorkflowParams.WorkflowJson = UComfyUIBlueprintLibrary::BuildQwenEditWorkflowJson(QwenParams);
+    }
+    else
+    {
+        TSharedPtr<FJsonObject> WorkflowObj;
+        if (!LoadWorkflowFromFile(TEXT("workflows/img2img-API.json"), WorkflowObj))
+        {
+            UpdateStatus(TEXT("Error: img2img workflow file not found"));
+            return;
+        }
+
+        FString Filename = FPaths::GetCleanFilename(PreviewImagePathA);
+        bool bIsDownloadedOutput = PreviewImagePathA.StartsWith(GetLocalTempFolder());
+        FString NodeImageValue = bIsDownloadedOutput
+            ? Filename + TEXT(" [output]")
+            : Filename;
+
+        if (TSharedPtr<FJsonObject> ImageNode = WorkflowObj->GetObjectField(TEXT("32")))
+            ImageNode->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("image"), NodeImageValue);
+
+        if (TSharedPtr<FJsonObject> PromptNode = WorkflowObj->GetObjectField(TEXT("2")))
+            PromptNode->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("text"), Img2ImgPromptText);
+
+        if (TSharedPtr<FJsonObject> SeedNode = WorkflowObj->GetObjectField(TEXT("16")))
+        {
+            int32 NewSeed = FMath::Abs((int32)(FDateTime::Now().GetTicks() % MAX_int32));
+            SeedNode->GetObjectField(TEXT("inputs"))->SetNumberField(TEXT("seed"), NewSeed);
+        }
+
+        WorkflowParams.WorkflowJson = SerializeWorkflow(WorkflowObj);
+    }
 
     SubmitWorkflow(WorkflowParams);
 }
@@ -1486,6 +1538,14 @@ void SComfyUIPanel::LoadAndDisplayImage(const FString& FilePath, bool bPreviewB)
 
     if (Preview.IsValid())
         Preview->SetImage(Brush.Get());
+}
+
+void SComfyUIPanel::OnModelFamilyChanged(TSharedPtr<FString> NewSelection, ESelectInfo::Type)
+{
+    SelectedModelFamilyOption = NewSelection;
+    SelectedModelFamily = (*NewSelection == TEXT("Qwen"))
+        ? EComfyUIModelFamily::Qwen
+        : EComfyUIModelFamily::Flux;
 }
 
 void SComfyUIPanel::OnPromptTextChanged(const FText& NewText)        { PromptText = NewText.ToString(); }
