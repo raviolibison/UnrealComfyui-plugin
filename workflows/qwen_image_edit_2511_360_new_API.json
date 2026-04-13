@@ -1,0 +1,290 @@
+{
+  "41": {
+    "inputs": {
+      "image": "UE_Editor_00026_.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "172": {
+    "inputs": {
+      "vae_name": "qwen_image_vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "173": {
+    "inputs": {
+      "clip_name": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+      "type": "qwen_image",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Load CLIP"
+    }
+  },
+  "174": {
+    "inputs": {
+      "unet_name": "qwen_image_edit_2511_fp8mixed.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "Load Diffusion Model"
+    }
+  },
+  "175": {
+    "inputs": {
+      "prompt": "Create an equirectangular 360 panorama from this image with seamlessly matching edges",
+      "clip": [
+        "173",
+        0
+      ],
+      "vae": [
+        "172",
+        0
+      ],
+      "image1": [
+        "41",
+        0
+      ]
+    },
+    "class_type": "TextEncodeQwenImageEditPlus",
+    "_meta": {
+      "title": "TextEncodeQwenImageEditPlus (Positive)"
+    }
+  },
+  "176": {
+    "inputs": {
+      "prompt": "",
+      "clip": [
+        "173",
+        0
+      ],
+      "vae": [
+        "172",
+        0
+      ],
+      "image1": [
+        "41",
+        0
+      ]
+    },
+    "class_type": "TextEncodeQwenImageEditPlus",
+    "_meta": {
+      "title": "TextEncodeQwenImageEditPlus"
+    }
+  },
+  "177": {
+    "inputs": {
+      "shift": 3.1,
+      "model": [
+        "205",
+        0
+      ]
+    },
+    "class_type": "ModelSamplingAuraFlow",
+    "_meta": {
+      "title": "ModelSamplingAuraFlow"
+    }
+  },
+  "178": {
+    "inputs": {
+      "strength": 1,
+      "model": [
+        "177",
+        0
+      ]
+    },
+    "class_type": "CFGNorm",
+    "_meta": {
+      "title": "CFGNorm"
+    }
+  },
+  "179": {
+    "inputs": {
+      "reference_latents_method": "index_timestep_zero",
+      "conditioning": [
+        "175",
+        0
+      ]
+    },
+    "class_type": "FluxKontextMultiReferenceLatentMethod",
+    "_meta": {
+      "title": "Edit Model Reference Method"
+    }
+  },
+  "180": {
+    "inputs": {
+      "reference_latents_method": "index_timestep_zero",
+      "conditioning": [
+        "176",
+        0
+      ]
+    },
+    "class_type": "FluxKontextMultiReferenceLatentMethod",
+    "_meta": {
+      "title": "Edit Model Reference Method"
+    }
+  },
+  "181": {
+    "inputs": {
+      "value": 50
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "Steps"
+    }
+  },
+  "182": {
+    "inputs": {
+      "value": 4
+    },
+    "class_type": "PrimitiveFloat",
+    "_meta": {
+      "title": "CFG"
+    }
+  },
+  "183": {
+    "inputs": {
+      "seed": 1007409132680810,
+      "steps": [
+        "181",
+        0
+      ],
+      "cfg": [
+        "182",
+        0
+      ],
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1,
+      "model": [
+        "178",
+        0
+      ],
+      "positive": [
+        "179",
+        0
+      ],
+      "negative": [
+        "180",
+        0
+      ],
+      "latent_image": [
+        "186",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler"
+    }
+  },
+  "184": {
+    "inputs": {
+      "samples": [
+        "183",
+        0
+      ],
+      "vae": [
+        "172",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "186": {
+    "inputs": {
+      "pixels": [
+        "193",
+        0
+      ],
+      "vae": [
+        "172",
+        0
+      ]
+    },
+    "class_type": "VAEEncode",
+    "_meta": {
+      "title": "VAE Encode"
+    }
+  },
+  "193": {
+    "inputs": {
+      "resize_type": "scale dimensions",
+      "resize_type.width": 2048,
+      "resize_type.height": 1024,
+      "resize_type.crop": "disabled",
+      "scale_method": "area",
+      "input": [
+        "41",
+        0
+      ]
+    },
+    "class_type": "ResizeImageMaskNode",
+    "_meta": {
+      "title": "Resize Image/Mask"
+    }
+  },
+  "205": {
+    "inputs": {
+      "lora_name": "[Qwen.Image]360viewer_Redmond.safetensors",
+      "strength_model": 1,
+      "model": [
+        "174",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "Load LoRA"
+    }
+  },
+  "210": {
+    "inputs": {
+      "model_name": "001_classicalSR_DF2K_s64w8_SwinIR-M_x2.pth"
+    },
+    "class_type": "UpscaleModelLoader",
+    "_meta": {
+      "title": "Load Upscale Model"
+    }
+  },
+  "211": {
+    "inputs": {
+      "upscale_model": [
+        "210",
+        0
+      ],
+      "image": [
+        "184",
+        0
+      ]
+    },
+    "class_type": "ImageUpscaleWithModel",
+    "_meta": {
+      "title": "Upscale Image (using Model)"
+    }
+  },
+  "212": {
+    "inputs": {
+      "filename_prefix": "360",
+      "images": [
+        "211",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  }
+}
