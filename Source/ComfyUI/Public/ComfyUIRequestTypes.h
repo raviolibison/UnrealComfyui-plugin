@@ -121,7 +121,7 @@ struct FComfyUIQwenGenerateParams
     FString VaeName = TEXT("qwen_image_vae.safetensors");
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ComfyUI")
-    int32 Steps = 20;
+    int32 Steps = 40;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ComfyUI")
     float CFGScale = 4.0f;
@@ -139,7 +139,7 @@ struct FComfyUIQwenGenerateParams
     int32 Seed = -1;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ComfyUI")
-    FString Sampler = TEXT("euler");
+    FString Sampler = TEXT("res_multistep");
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ComfyUI")
     FString Scheduler = TEXT("simple");
@@ -170,7 +170,7 @@ struct FComfyUIQwenEditParams
     FString VaeName = TEXT("qwen_image_vae.safetensors");
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ComfyUI")
-    int32 Steps = 20;
+    int32 Steps = 40;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ComfyUI")
     float CFGScale = 4.0f;
@@ -188,10 +188,10 @@ struct FComfyUIQwenEditParams
     int32 Seed = -1;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ComfyUI")
-    FString Sampler = TEXT("dpmpp_2m");
+    FString Sampler = TEXT("res_multistep");
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ComfyUI")
-    FString Scheduler = TEXT("karras");
+    FString Scheduler = TEXT("simple");
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ComfyUI")
     FString FilenamePrefix = TEXT("UE_QwenEdit");

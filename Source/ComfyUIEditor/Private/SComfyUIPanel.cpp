@@ -723,7 +723,7 @@ void SComfyUIPanel::StartImg2Img()
 void SComfyUIPanel::Start360Generation(const FString& SourcePath)
 {
     TSharedPtr<FJsonObject> WorkflowObj;
-    if (!LoadWorkflowFromFile(TEXT("workflows/360_Kontext-Small-API.json"), WorkflowObj))
+    if (!LoadWorkflowFromFile(TEXT("workflows/qwen_image_edit_2511_360_API.json"), WorkflowObj))
     {
         UpdateStatus(TEXT("Error: 360 workflow file not found"));
         return;
@@ -735,20 +735,25 @@ void SComfyUIPanel::Start360Generation(const FString& SourcePath)
         ? Filename + TEXT(" [output]")
         : Filename;
 
-    if (TSharedPtr<FJsonObject> Node147 = WorkflowObj->GetObjectField(TEXT("147")))
-        Node147->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("image"), NodeImageValue);
+    // Patch source image
+    if (TSharedPtr<FJsonObject> Node41 = WorkflowObj->GetObjectField(TEXT("41")))
+        Node41->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("image"), NodeImageValue);
 
-    if (TSharedPtr<FJsonObject> Node142 = WorkflowObj->GetObjectField(TEXT("142")))
-        Node142->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("image"), NodeImageValue);
+    // Patch seed
+    if (TSharedPtr<FJsonObject> Node183 = WorkflowObj->GetObjectField(TEXT("183")))
+    {
+        int32 NewSeed = FMath::Abs((int32)(FDateTime::Now().GetTicks() % MAX_int32));
+        Node183->GetObjectField(TEXT("inputs"))->SetNumberField(TEXT("seed"), NewSeed);
+    }
 
     FComfyWorkflowParams WorkflowParams;
-    WorkflowParams.WorkflowJson   = SerializeWorkflow(WorkflowObj);
-    WorkflowParams.OutputPrefix   = TEXT("Kontext_Upscale");
-    WorkflowParams.RunningStatus  = TEXT("Generating 360\u00b0 panorama...");
+    WorkflowParams.WorkflowJson = SerializeWorkflow(WorkflowObj);
+    WorkflowParams.OutputPrefix = TEXT("360_Qwen");
+    WorkflowParams.RunningStatus = TEXT("Generating 360\u00b0 panorama...");
     WorkflowParams.CompleteStatus = TEXT("360\u00b0 HDRI generated and imported to project!");
     WorkflowParams.bUpdatePreview = false;
-    WorkflowParams.bAutoImport    = false;
-	WorkflowParams.bConvertToHDRI = true;
+    WorkflowParams.bAutoImport = false;
+    WorkflowParams.bConvertToHDRI = true;
 
     SubmitWorkflow(WorkflowParams);
 }
