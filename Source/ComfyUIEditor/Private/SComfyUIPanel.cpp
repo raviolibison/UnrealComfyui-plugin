@@ -745,6 +745,14 @@ void SComfyUIPanel::OnWorkflowComplete(bool bSuccess, const FString& PromptId, F
 
     StopHistoryPoller();
 
+    // Clean up the watcher whether WS fired or poller fired
+    if (FComfyUIModule* Module = FModuleManager::GetModulePtr<FComfyUIModule>(TEXT("ComfyUI")))
+    {
+        TSharedPtr<FComfyUIWebSocketHandler> WSHandler = Module->GetWebSocketHandler();
+        if (WSHandler.IsValid())
+            WSHandler->UnwatchPrompt(PromptId);
+    }
+
     UE_LOG(LogTemp, Warning, TEXT("ComfyUI: OnWorkflowComplete - Success: %d, PromptId: %s"),
         bSuccess, *PromptId);
 
