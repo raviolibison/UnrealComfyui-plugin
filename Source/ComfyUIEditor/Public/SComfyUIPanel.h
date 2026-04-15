@@ -3,37 +3,42 @@
 #include "CoreMinimal.h"
 #include "Widgets/SCompoundWidget.h"
 #include "Widgets/DeclarativeSyntaxSupport.h"
+#include "Widgets/Layout/SWidgetSwitcher.h"
 #include "ComfyUIRequestTypes.h"
 
 // ============================================================================
 // FComfyWorkflowParams
-// A small descriptor that travels with every workflow submission.
 // ============================================================================
 struct FComfyWorkflowParams
 {
-    /** The fully patched workflow JSON, ready to POST to /prompt */
     FString WorkflowJson;
-
-    /** Prefix used for asset naming on import */
     FString OutputPrefix;
-
-    /** Status message shown while the workflow is running */
     FString RunningStatus;
-
-    /** Status message shown when the workflow completes successfully */
     FString CompleteStatus;
-
-    /** If true, the output image updates the preview */
     bool bUpdatePreview = true;
-
-    /** If true, auto-imports the result to the UE project (used for 360 generation) */
     bool bAutoImport = false;
-
-    /**If true convert the result to HDR and apply to HDRIbackdrop*/
-	bool bConvertToHDRI = false;
-
-    /** If true, result goes to Preview B, otherwise Preview A */
+    bool bConvertToHDRI = false;
     bool bTargetPreviewB = false;
+};
+
+// ============================================================================
+// Per-model settings structs
+// ============================================================================
+struct FQwenSettings
+{
+    int32 Steps = 30;
+    float CFGScale = 4.0f;
+    float Shift = 3.0f;
+    FString Sampler = TEXT("res_multistep");
+    FString Scheduler = TEXT("simple");
+};
+
+struct FFluxSettings
+{
+    int32 Steps = 4;
+    float CFGScale = 1.0f;
+    FString Sampler = TEXT("euler");
+    FString Scheduler = TEXT("simple");
 };
 
 // ============================================================================
@@ -50,6 +55,15 @@ public:
 
 private:
     // -------------------------------------------------------------------------
+    // Tab switcher
+    // -------------------------------------------------------------------------
+    TSharedPtr<SWidgetSwitcher> TabSwitcher;
+    int32 ActiveTabIndex = 0;
+
+    TSharedRef<SWidget> BuildGenerateTab();
+    TSharedRef<SWidget> BuildSettingsTab();
+
+    // -------------------------------------------------------------------------
     // UI State
     // -------------------------------------------------------------------------
     FString PromptText = TEXT("Beautiful Scandinavian forest, big open foreground with tire tracks and puddles");
@@ -57,24 +71,24 @@ private:
     FString StatusText;
     bool bIsComfyReady = false;
 
-    // Preview A — text2img / browsed image
+    // Preview A
     TSharedPtr<class SImage> PreviewImageA;
     TSharedPtr<FSlateBrush> ImageBrushA;
     FString PreviewImagePathA;
 
-    // Preview B — img2img result
+    // Preview B
     TSharedPtr<class SImage> PreviewImageB;
     TSharedPtr<FSlateBrush> ImageBrushB;
     FString PreviewImagePathB;
 
     TWeakPtr<SComfyUIPanel> WeakThis;
 
-    // Model family selector
-    EComfyUIModelFamily SelectedModelFamily = EComfyUIModelFamily::Flux;
+    // Model family
+    EComfyUIModelFamily SelectedModelFamily = EComfyUIModelFamily::Qwen;
     TArray<TSharedPtr<FString>> ModelFamilyOptions;
     TSharedPtr<FString> SelectedModelFamilyOption;
 
-    // Resolution controls
+    // Resolution
     TArray<TSharedPtr<FString>> WidthOptions;
     TArray<TSharedPtr<FString>> HeightOptions;
     TSharedPtr<FString> SelectedWidth;
@@ -82,14 +96,14 @@ private:
     int32 CustomWidth = 1024;
     int32 CustomHeight = 1024;
 
-    // Current generation state
+    // Generation state
     FString CurrentPromptId;
     FString CurrentFilenamePrefix = TEXT("UE_Editor");
 
     // Img2Img
     FString Img2ImgPromptText = TEXT("Edit the image...");
 
-    // Connection polling
+    // Timers
     FTimerHandle ConnectionTimerHandle;
     FTimerHandle PollingTimerHandle;
     FString PollingPromptId;
@@ -98,25 +112,37 @@ private:
     FString LastImportedImagePath;
     TWeakObjectPtr<UTexture2D> LastImportedTexture;
 
-    /** Convert an LDR image (PNG/JPEG) to a .hdr file with highlight boosting.
- *  Returns the path to the written .hdr file, or empty string on failure. */
-    FString ConvertImageToHDR(const FString& SourceImagePath);
+    // -------------------------------------------------------------------------
+    // Per-model settings
+    // -------------------------------------------------------------------------
+    FQwenSettings QwenSettings;
+    FFluxSettings FluxSettings;
 
-    /** Import an .hdr file as a UTexture2D with HDR settings (no sRGB, HDR float). */
-    UTextureCube* ImportHDRToProject(const FString& HdrFilePath, const FString& AssetName);
+    // Sampler/scheduler options shared between models
+    TArray<TSharedPtr<FString>> SamplerOptions;
+    TArray<TSharedPtr<FString>> SchedulerOptions;
 
-    /** Find the HDRIBackdrop actor in the current level and apply the given texture. */
-    void ApplyTextureToHDRIBackdrop(UTextureCube* Texture);                                                               
+    // Qwen settings selected items
+    TSharedPtr<FString> QwenSelectedSampler;
+    TSharedPtr<FString> QwenSelectedScheduler;
+
+    // Flux settings selected items
+    TSharedPtr<FString> FluxSelectedSampler;
+    TSharedPtr<FString> FluxSelectedScheduler;
 
     // -------------------------------------------------------------------------
-    // Generic Workflow System
+    // HDR
+    // -------------------------------------------------------------------------
+    FString ConvertImageToHDR(const FString& SourceImagePath);
+    UTextureCube* ImportHDRToProject(const FString& HdrFilePath, const FString& AssetName);
+    void ApplyTextureToHDRIBackdrop(UTextureCube* Texture);
+
+    // -------------------------------------------------------------------------
+    // Workflow system
     // -------------------------------------------------------------------------
     void SubmitWorkflow(const FComfyWorkflowParams& Params);
     void OnWorkflowComplete(bool bSuccess, const FString& PromptId, FComfyWorkflowParams Params);
 
-    // -------------------------------------------------------------------------
-    // Workflow Builders
-    // -------------------------------------------------------------------------
     void StartGeneration();
     void StartImg2Img();
     void Start360Generation(const FString& SourcePath);
@@ -144,21 +170,14 @@ private:
     // -------------------------------------------------------------------------
     void PollComfyConnection();
     void StartHistoryPoller(const FString& PromptId, const FComfyWorkflowParams& Params);
-    void StopHistoryPoller();                                                               
+    void StopHistoryPoller();
     void UpdateStatus(const FString& Status);
     void LoadAndDisplayImage(const FString& FilePath, bool bPreviewB);
     void ImportImageToProject(const FString& ImagePath, const FString& AssetNamePrefix);
     void ApplyTextureToComposurePlates(UTexture2D* Texture);
-
-    /** Upload a local image file to ComfyUI's input folder via /upload/image */
-    void UploadImageToComfyUI(const FString& LocalFilePath, TFunction<void(bool bSuccess, const FString& Filename)> OnComplete);
-
-    /** Download an output image from ComfyUI via /view and save to local temp folder */
-    void DownloadImageFromComfyUI(const FString& Filename, TFunction<void(bool bSuccess, const FString& LocalPath)> OnComplete);
-
-    /** Returns a local temp folder for downloaded images */
+    void UploadImageToComfyUI(const FString& LocalFilePath, TFunction<void(bool, const FString&)> OnComplete);
+    void DownloadImageFromComfyUI(const FString& Filename, TFunction<void(bool, const FString&)> OnComplete);
     FString GetLocalTempFolder() const;
-
     bool LoadWorkflowFromFile(const FString& RelativePath, TSharedPtr<FJsonObject>& OutWorkflow);
     FString SerializeWorkflow(const TSharedPtr<FJsonObject>& WorkflowObj);
 };

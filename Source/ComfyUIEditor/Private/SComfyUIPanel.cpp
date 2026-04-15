@@ -55,125 +55,383 @@ void SComfyUIPanel::Construct(const FArguments& InArgs)
     HeightOptions.Add(MakeShared<FString>(TEXT("Custom")));
     SelectedHeight = HeightOptions[2];
 
-    // Model family options
     ModelFamilyOptions.Add(MakeShared<FString>(TEXT("Flux")));
     ModelFamilyOptions.Add(MakeShared<FString>(TEXT("Qwen")));
-    SelectedModelFamilyOption = ModelFamilyOptions[0];
+    SelectedModelFamilyOption = ModelFamilyOptions[1];
 
-    StatusText = TEXT("Connecting...");
-    WeakThis = SharedThis(this);
+    // Sampler options
+    for (auto& S : TArray<FString>{ TEXT("euler"), TEXT("euler_ancestral"), TEXT("dpmpp_2m"),
+                                     TEXT("dpmpp_2m_sde"), TEXT("dpmpp_3m_sde"), TEXT("heun"), TEXT("res_multistep") })
+        SamplerOptions.Add(MakeShared<FString>(S));
 
+    // Scheduler options
+    for (auto& S : TArray<FString>{ TEXT("simple"), TEXT("karras"), TEXT("exponential"),
+                                     TEXT("sgm_uniform"), TEXT("beta") })
+        SchedulerOptions.Add(MakeShared<FString>(S));
+
+    auto FindOption = [](TArray<TSharedPtr<FString>>& Opts, const FString& Val) -> TSharedPtr<FString> {
+        for (auto& O : Opts) if (*O == Val) return O;
+        return Opts[0];
+        };
+
+    QwenSelectedSampler = FindOption(SamplerOptions, QwenSettings.Sampler);
+    QwenSelectedScheduler = FindOption(SchedulerOptions, QwenSettings.Scheduler);
+    FluxSelectedSampler = FindOption(SamplerOptions, FluxSettings.Sampler);
+    FluxSelectedScheduler = FindOption(SchedulerOptions, FluxSettings.Scheduler);
+
+    StatusText = TEXT("Connecting..."); 
+    WeakThis = SharedThis(this);         
     PollComfyConnection();
 
     ChildSlot
-    [
-        SNew(SScrollBox)
+        [
+            SNew(SVerticalBox)
+
+                // --- Tab buttons ---
+                + SVerticalBox::Slot().AutoHeight().Padding(0)
+                [
+                    SNew(SHorizontalBox)
+                        + SHorizontalBox::Slot().FillWidth(1.0f)
+                        [
+                            SNew(SButton)
+                                .HAlign(HAlign_Center)
+                                .Text(LOCTEXT("TabGenerate", "Generate"))
+                                .OnClicked_Lambda([this]() {
+                                TabSwitcher->SetActiveWidgetIndex(0);
+                                return FReply::Handled();
+                                    })
+                        ]
+                    + SHorizontalBox::Slot().FillWidth(1.0f)
+                        [
+                            SNew(SButton)
+                                .HAlign(HAlign_Center)
+                                .Text(LOCTEXT("TabSettings", "Settings"))
+                                .OnClicked_Lambda([this]() {
+                                TabSwitcher->SetActiveWidgetIndex(1);
+                                return FReply::Handled();
+                                    })
+                        ]
+                ]
+
+            // --- Tab content ---
+            + SVerticalBox::Slot().FillHeight(1.0f)
+                [
+                    SAssignNew(TabSwitcher, SWidgetSwitcher)
+                        + SWidgetSwitcher::Slot()[BuildGenerateTab()]
+                        + SWidgetSwitcher::Slot()[BuildSettingsTab()]
+                ]
+        ];
+}
+
+TSharedRef<SWidget> SComfyUIPanel::BuildGenerateTab()
+{
+    return SNew(SScrollBox)
         + SScrollBox::Slot().Padding(10.0f)
         [
             SNew(SVerticalBox)
 
-            // --- Connection Status ---
-            + SVerticalBox::Slot().AutoHeight().Padding(0,0,0,15)
-            [
-                SNew(SHorizontalBox)
-                + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
-                [
-                    SNew(STextBlock)
-                    .Text(FText::FromString(TEXT("\u25CF")))
-                    .Font(FCoreStyle::GetDefaultFontStyle("Regular", 24))
-                    .ColorAndOpacity_Lambda([this]() {
-                        return bIsComfyReady ? FLinearColor::Green : FLinearColor::Red;
-                    })
-                ]
-                + SHorizontalBox::Slot().AutoWidth().Padding(8,0,0,0).VAlign(VAlign_Center)
-                [
-                    SNew(STextBlock)
-                    .Text_Lambda([this]() {
-                        return bIsComfyReady
-                            ? LOCTEXT("ServerReady", "ComfyUI Connected")
-                            : LOCTEXT("ServerOffline", "ComfyUI Offline");
-                    })
-                ]
-            ]
-
-            // --- Prompt ---
-            + SVerticalBox::Slot().AutoHeight()
-            [ SNew(STextBlock).Text(LOCTEXT("PromptLabel", "Prompt:")) ]
-            + SVerticalBox::Slot().AutoHeight().Padding(0,5,0,10)
-            [
-                SNew(SEditableTextBox)
-                .HintText(LOCTEXT("PromptHint", "Describe the image..."))
-                .Text(FText::FromString(PromptText))
-                .OnTextChanged(this, &SComfyUIPanel::OnPromptTextChanged)
-            ]
-            + SVerticalBox::Slot().AutoHeight()
-            [ SNew(STextBlock).Text(LOCTEXT("NegPromptLabel", "Negative Prompt:")) ]
-            + SVerticalBox::Slot().AutoHeight().Padding(0,5,0,10)
-            [
-                SNew(SEditableTextBox)
-                .HintText(LOCTEXT("NegPromptHint", "What to avoid..."))
-                .Text(FText::FromString(NegativePromptText))
-                .OnTextChanged(this, &SComfyUIPanel::OnNegativePromptTextChanged)
-            ]
-
-            // --- Resolution ---
-            + SVerticalBox::Slot().AutoHeight().Padding(0,5)
-            [
-                SNew(SHorizontalBox)
-                + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
-                [ SNew(STextBlock).Text(LOCTEXT("WidthLabel", "Width: ")) ]
-                + SHorizontalBox::Slot().Padding(10,0,0,0).AutoWidth()
-                [
-                    SNew(SComboBox<TSharedPtr<FString>>)
-                    .OptionsSource(&WidthOptions)
-                    .OnSelectionChanged(this, &SComfyUIPanel::OnWidthChanged)
-                    .OnGenerateWidget_Lambda([](TSharedPtr<FString> Item) {
-                        return SNew(STextBlock).Text(FText::FromString(*Item));
-                    })
-                    .InitiallySelectedItem(SelectedWidth)
-                    [ SNew(STextBlock).Text_Lambda([this](){ return FText::FromString(*SelectedWidth); }) ]
-                ]
-                + SHorizontalBox::Slot().Padding(10,0,0,0).AutoWidth()
-                [
-                    SNew(SNumericEntryBox<int32>)
-                    .Visibility_Lambda([this]() {
-                        return (*SelectedWidth == TEXT("Custom")) ? EVisibility::Visible : EVisibility::Collapsed;
-                    })
-                    .Value_Lambda([this]() { return TOptional<int32>(CustomWidth); })
-                    .OnValueChanged(this, &SComfyUIPanel::OnCustomWidthChanged)
-                    .MinValue(64).MaxValue(8192).MinDesiredValueWidth(100)
-                ]
-                + SHorizontalBox::Slot().AutoWidth().Padding(20,0,0,0).VAlign(VAlign_Center)
-                [ SNew(STextBlock).Text(LOCTEXT("HeightLabel", "Height: ")) ]
-                + SHorizontalBox::Slot().Padding(10,0,0,0).AutoWidth()
-                [
-                    SNew(SComboBox<TSharedPtr<FString>>)
-                    .OptionsSource(&HeightOptions)
-                    .OnSelectionChanged(this, &SComfyUIPanel::OnHeightChanged)
-                    .OnGenerateWidget_Lambda([](TSharedPtr<FString> Item) {
-                        return SNew(STextBlock).Text(FText::FromString(*Item));
-                    })
-                    .InitiallySelectedItem(SelectedHeight)
-                    [ SNew(STextBlock).Text_Lambda([this](){ return FText::FromString(*SelectedHeight); }) ]
-                ]
-                + SHorizontalBox::Slot().Padding(10,0,0,0).AutoWidth()
-                [
-                    SNew(SNumericEntryBox<int32>)
-                    .Visibility_Lambda([this]() {
-                        return (*SelectedHeight == TEXT("Custom")) ? EVisibility::Visible : EVisibility::Collapsed;
-                    })
-                    .Value_Lambda([this]() { return TOptional<int32>(CustomHeight); })
-                    .OnValueChanged(this, &SComfyUIPanel::OnCustomHeightChanged)
-                    .MinValue(64).MaxValue(8192).MinDesiredValueWidth(100)
-                ]
-            ]
-
-            // --- Model Family ---
-            + SVerticalBox::Slot().AutoHeight().Padding(0, 5, 0, 10)
+                // --- Connection Status ---
+                + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 15)
                 [
                     SNew(SHorizontalBox)
                         + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
-                        [SNew(STextBlock).Text(LOCTEXT("ModelFamilyLabel", "Model: "))]
+                        [
+                            SNew(STextBlock)
+                                .Text(FText::FromString(TEXT("\u25CF")))
+                                .Font(FCoreStyle::GetDefaultFontStyle("Regular", 24))
+                                .ColorAndOpacity_Lambda([this]() {
+                                return bIsComfyReady ? FLinearColor::Green : FLinearColor::Red;
+                                    })
+                        ]
+                    + SHorizontalBox::Slot().AutoWidth().Padding(8, 0, 0, 0).VAlign(VAlign_Center)
+                        [
+                            SNew(STextBlock)
+                                .Text_Lambda([this]() {
+                                return bIsComfyReady
+                                    ? LOCTEXT("ServerReady", "ComfyUI Connected")
+                                    : LOCTEXT("ServerOffline", "ComfyUI Offline");
+                                    })
+                        ]
+                    + SHorizontalBox::Slot().FillWidth(1.0f)
+                        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
+                        [
+                            SNew(STextBlock)
+                                .Text_Lambda([this]() {
+                                return FText::FromString(FString::Printf(TEXT("Model: %s"),
+                                    SelectedModelFamily == EComfyUIModelFamily::Qwen ? TEXT("Qwen") : TEXT("Flux")));
+                                    })
+                                .ColorAndOpacity(FLinearColor(0.6f, 0.6f, 0.6f))
+                        ]
+                ]
+
+            // --- Prompt ---
+            + SVerticalBox::Slot().AutoHeight()
+                [SNew(STextBlock).Text(LOCTEXT("PromptLabel", "Prompt:"))]
+                + SVerticalBox::Slot().AutoHeight().Padding(0, 5, 0, 10)
+                [
+                    SNew(SEditableTextBox)
+                        .HintText(LOCTEXT("PromptHint", "Describe the image..."))
+                        .Text(FText::FromString(PromptText))
+                        .OnTextChanged(this, &SComfyUIPanel::OnPromptTextChanged)
+                ]
+                + SVerticalBox::Slot().AutoHeight()
+                [SNew(STextBlock).Text(LOCTEXT("NegPromptLabel", "Negative Prompt:"))]
+                + SVerticalBox::Slot().AutoHeight().Padding(0, 5, 0, 10)
+                [
+                    SNew(SEditableTextBox)
+                        .HintText(LOCTEXT("NegPromptHint", "What to avoid..."))
+                        .Text(FText::FromString(NegativePromptText))
+                        .OnTextChanged(this, &SComfyUIPanel::OnNegativePromptTextChanged)
+                ]
+
+                // --- Resolution ---
+                + SVerticalBox::Slot().AutoHeight().Padding(0, 5)
+                [
+                    SNew(SHorizontalBox)
+                        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
+                        [SNew(STextBlock).Text(LOCTEXT("WidthLabel", "Width: "))]
+                        + SHorizontalBox::Slot().Padding(10, 0, 0, 0).AutoWidth()
+                        [
+                            SNew(SComboBox<TSharedPtr<FString>>)
+                                .OptionsSource(&WidthOptions)
+                                .OnSelectionChanged(this, &SComfyUIPanel::OnWidthChanged)
+                                .OnGenerateWidget_Lambda([](TSharedPtr<FString> Item) {
+                                return SNew(STextBlock).Text(FText::FromString(*Item));
+                                    })
+                                .InitiallySelectedItem(SelectedWidth)
+                                [SNew(STextBlock).Text_Lambda([this]() { return FText::FromString(*SelectedWidth); })]
+                        ]
+                    + SHorizontalBox::Slot().Padding(10, 0, 0, 0).AutoWidth()
+                        [
+                            SNew(SNumericEntryBox<int32>)
+                                .Visibility_Lambda([this]() {
+                                return (*SelectedWidth == TEXT("Custom")) ? EVisibility::Visible : EVisibility::Collapsed;
+                                    })
+                                .Value_Lambda([this]() { return TOptional<int32>(CustomWidth); })
+                                .OnValueChanged(this, &SComfyUIPanel::OnCustomWidthChanged)
+                                .MinValue(64).MaxValue(8192).MinDesiredValueWidth(100)
+                        ]
+                    + SHorizontalBox::Slot().AutoWidth().Padding(20, 0, 0, 0).VAlign(VAlign_Center)
+                        [SNew(STextBlock).Text(LOCTEXT("HeightLabel", "Height: "))]
+                        + SHorizontalBox::Slot().Padding(10, 0, 0, 0).AutoWidth()
+                        [
+                            SNew(SComboBox<TSharedPtr<FString>>)
+                                .OptionsSource(&HeightOptions)
+                                .OnSelectionChanged(this, &SComfyUIPanel::OnHeightChanged)
+                                .OnGenerateWidget_Lambda([](TSharedPtr<FString> Item) {
+                                return SNew(STextBlock).Text(FText::FromString(*Item));
+                                    })
+                                .InitiallySelectedItem(SelectedHeight)
+                                [SNew(STextBlock).Text_Lambda([this]() { return FText::FromString(*SelectedHeight); })]
+                        ]
+                    + SHorizontalBox::Slot().Padding(10, 0, 0, 0).AutoWidth()
+                        [
+                            SNew(SNumericEntryBox<int32>)
+                                .Visibility_Lambda([this]() {
+                                return (*SelectedHeight == TEXT("Custom")) ? EVisibility::Visible : EVisibility::Collapsed;
+                                    })
+                                .Value_Lambda([this]() { return TOptional<int32>(CustomHeight); })
+                                .OnValueChanged(this, &SComfyUIPanel::OnCustomHeightChanged)
+                                .MinValue(64).MaxValue(8192).MinDesiredValueWidth(100)
+                        ]
+                ]
+
+            // --- Generate / Browse ---
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 15, 0, 5)
+                [
+                    SNew(SHorizontalBox)
+                        + SHorizontalBox::Slot().AutoWidth()
+                        [
+                            SNew(SButton)
+                                .Text(LOCTEXT("GenerateButton", "Generate Image"))
+                                .OnClicked(this, &SComfyUIPanel::OnGenerateClicked)
+                                .IsEnabled_Lambda([this]() { return bIsComfyReady; })
+                        ]
+                        + SHorizontalBox::Slot().AutoWidth().Padding(10, 0, 0, 0)
+                        [
+                            SNew(SButton)
+                                .Text(LOCTEXT("BrowseButton", "Browse Input..."))
+                                .OnClicked(this, &SComfyUIPanel::OnImg2ImgBrowseClicked)
+                                .ToolTipText(LOCTEXT("BrowseTooltip", "Load an existing image into Preview A"))
+                        ]
+                ]
+
+            // --- Preview A ---
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 10, 0, 5).HAlign(HAlign_Center)
+                [
+                    SNew(SBox)
+                        .WidthOverride_Lambda([this]() -> FOptionalSize {
+                        if (ImageBrushA.IsValid() && ImageBrushA->GetResourceObject())
+                        {
+                            const FVector2D S = ImageBrushA->ImageSize;
+                            if (S.X > 0 && S.Y > 0)
+                                return FOptionalSize(S.X * FMath::Min(FMath::Min(800.f / S.X, 600.f / S.Y), 1.f));
+                        }
+                        return FOptionalSize();
+                            })
+                        .HeightOverride_Lambda([this]() -> FOptionalSize {
+                        if (ImageBrushA.IsValid() && ImageBrushA->GetResourceObject())
+                        {
+                            const FVector2D S = ImageBrushA->ImageSize;
+                            if (S.X > 0 && S.Y > 0)
+                                return FOptionalSize(S.Y * FMath::Min(FMath::Min(800.f / S.X, 600.f / S.Y), 1.f));
+                        }
+                        return FOptionalSize();
+                            })
+                        [SAssignNew(PreviewImageA, SImage)]
+                ]
+
+            // --- Preview A Actions ---
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 5, 0, 15)
+                [
+                    SNew(SHorizontalBox)
+                        + SHorizontalBox::Slot().AutoWidth()
+                        [
+                            SNew(SButton)
+                                .Text(LOCTEXT("ImportAButton", "Import to Project"))
+                                .IsEnabled_Lambda([this]() { return !PreviewImagePathA.IsEmpty(); })
+                                .OnClicked_Lambda([this]() { return OnImportClicked(PreviewImagePathA); })
+                        ]
+                        + SHorizontalBox::Slot().AutoWidth().Padding(10, 0, 0, 0)
+                        [
+                            SNew(SButton)
+                                .Text(LOCTEXT("ComposureAButton", "Apply to Composure"))
+                                .IsEnabled_Lambda([this]() { return !PreviewImagePathA.IsEmpty(); })
+                                .OnClicked_Lambda([this]() { return OnApplyToComposureClicked(PreviewImagePathA); })
+                        ]
+                        + SHorizontalBox::Slot().AutoWidth().Padding(10, 0, 0, 0)
+                        [
+                            SNew(SButton)
+                                .Text(LOCTEXT("360AButton", "Generate 360\u00b0 HDRI"))
+                                .IsEnabled_Lambda([this]() { return bIsComfyReady && !PreviewImagePathA.IsEmpty(); })
+                                .OnClicked_Lambda([this]() { return OnGenerate360Clicked(PreviewImagePathA); })
+                        ]
+                ]
+
+            // --- Img2Img ---
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 5)
+                [
+                    SNew(STextBlock)
+                        .Text(LOCTEXT("Img2ImgLabel", "Refine / Edit (Img2Img):"))
+                        .Font(FCoreStyle::GetDefaultFontStyle("Bold", 10))
+                ]
+                + SVerticalBox::Slot().AutoHeight().Padding(0, 5, 0, 10)
+                [
+                    SNew(SEditableTextBox)
+                        .HintText(LOCTEXT("Img2ImgHint", "Describe the edit..."))
+                        .Text(FText::FromString(Img2ImgPromptText))
+                        .OnTextChanged_Lambda([this](const FText& T) { Img2ImgPromptText = T.ToString(); })
+                ]
+                + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 5)
+                [
+                    SNew(SButton)
+                        .Text(LOCTEXT("Img2ImgButton", "Run Img2Img"))
+                        .IsEnabled_Lambda([this]() { return bIsComfyReady && !PreviewImagePathA.IsEmpty(); })
+                        .OnClicked(this, &SComfyUIPanel::OnImg2ImgClicked)
+                ]
+
+                // --- Preview B ---
+                + SVerticalBox::Slot().AutoHeight().Padding(0, 10, 0, 5).HAlign(HAlign_Center)
+                [
+                    SNew(SBox)
+                        .WidthOverride_Lambda([this]() -> FOptionalSize {
+                        if (ImageBrushB.IsValid() && ImageBrushB->GetResourceObject())
+                        {
+                            const FVector2D S = ImageBrushB->ImageSize;
+                            if (S.X > 0 && S.Y > 0)
+                                return FOptionalSize(S.X * FMath::Min(FMath::Min(800.f / S.X, 600.f / S.Y), 1.f));
+                        }
+                        return FOptionalSize();
+                            })
+                        .HeightOverride_Lambda([this]() -> FOptionalSize {
+                        if (ImageBrushB.IsValid() && ImageBrushB->GetResourceObject())
+                        {
+                            const FVector2D S = ImageBrushB->ImageSize;
+                            if (S.X > 0 && S.Y > 0)
+                                return FOptionalSize(S.Y * FMath::Min(FMath::Min(800.f / S.X, 600.f / S.Y), 1.f));
+                        }
+                        return FOptionalSize();
+                            })
+                        [SAssignNew(PreviewImageB, SImage)]
+                ]
+
+            // --- Preview B Actions ---
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 5, 0, 15)
+                [
+                    SNew(SHorizontalBox)
+                        + SHorizontalBox::Slot().AutoWidth()
+                        [
+                            SNew(SButton)
+                                .Text(LOCTEXT("ImportBButton", "Import to Project"))
+                                .IsEnabled_Lambda([this]() { return !PreviewImagePathB.IsEmpty(); })
+                                .OnClicked_Lambda([this]() { return OnImportClicked(PreviewImagePathB); })
+                        ]
+                        + SHorizontalBox::Slot().AutoWidth().Padding(10, 0, 0, 0)
+                        [
+                            SNew(SButton)
+                                .Text(LOCTEXT("ComposureBButton", "Apply to Composure"))
+                                .IsEnabled_Lambda([this]() { return !PreviewImagePathB.IsEmpty(); })
+                                .OnClicked_Lambda([this]() { return OnApplyToComposureClicked(PreviewImagePathB); })
+                        ]
+                        + SHorizontalBox::Slot().AutoWidth().Padding(10, 0, 0, 0)
+                        [
+                            SNew(SButton)
+                                .Text(LOCTEXT("360BButton", "Generate 360\u00b0 HDRI"))
+                                .IsEnabled_Lambda([this]() { return bIsComfyReady && !PreviewImagePathB.IsEmpty(); })
+                                .OnClicked_Lambda([this]() { return OnGenerate360Clicked(PreviewImagePathB); })
+                        ]
+                ]
+
+            // --- Status ---
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 5)
+                [
+                    SNew(STextBlock)
+                        .Text_Lambda([this]() { return FText::FromString(StatusText); })
+                        .Justification(ETextJustify::Center)
+                        .ColorAndOpacity_Lambda([this]() {
+                        if (StatusText.Contains("Error") || StatusText.Contains("Offline"))
+                            return FLinearColor::Red;
+                        if (StatusText.Contains("Generating") || StatusText.Contains("Waiting")
+                            || StatusText.Contains("Uploading") || StatusText.Contains("Running")
+                            || StatusText.Contains("Downloading"))
+                            return FLinearColor::Yellow;
+                        return FLinearColor::White;
+                            })
+                ]
+        ];
+}
+
+TSharedRef<SWidget> SComfyUIPanel::BuildSettingsTab()
+{
+    auto MakeSectionHeader = [](const FText& Label) -> TSharedRef<SWidget>
+        {
+            return SNew(SBorder)
+                .Padding(FMargin(6, 4))
+                .BorderBackgroundColor(FLinearColor(0.1f, 0.1f, 0.1f))
+                [
+                    SNew(STextBlock)
+                        .Text(Label)
+                        .Font(FCoreStyle::GetDefaultFontStyle("Bold", 11))
+                ];
+        };
+
+    auto MakeLabel = [](const FText& Label) -> TSharedRef<SWidget>
+        {
+            return SNew(SBox).WidthOverride(120).VAlign(VAlign_Center)
+                [SNew(STextBlock).Text(Label)];
+        };
+
+    return SNew(SScrollBox)
+        + SScrollBox::Slot().Padding(10.0f)
+        [
+            SNew(SVerticalBox)
+
+                // ---- Model selector ----
+                + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 15)
+                [
+                    SNew(SHorizontalBox)
+                        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
+                        [MakeLabel(LOCTEXT("ModelLabel", "Active Model:"))]
                         + SHorizontalBox::Slot().Padding(10, 0, 0, 0).AutoWidth()
                         [
                             SNew(SComboBox<TSharedPtr<FString>>)
@@ -189,171 +447,180 @@ void SComfyUIPanel::Construct(const FArguments& InArgs)
                         ]
                 ]
 
-            // --- Generate / Browse ---
-            + SVerticalBox::Slot().AutoHeight().Padding(0,15,0,5)
-            [
-                SNew(SHorizontalBox)
-                + SHorizontalBox::Slot().AutoWidth()
-                [
-                    SNew(SButton)
-                    .Text(LOCTEXT("GenerateButton", "Generate Image"))
-                    .OnClicked(this, &SComfyUIPanel::OnGenerateClicked)
-                    .IsEnabled_Lambda([this]() { return bIsComfyReady; })
-                ]
-                + SHorizontalBox::Slot().AutoWidth().Padding(10,0,0,0)
-                [
-                    SNew(SButton)
-                    .Text(LOCTEXT("BrowseButton", "Browse Input..."))
-                    .OnClicked(this, &SComfyUIPanel::OnImg2ImgBrowseClicked)
-                    .ToolTipText(LOCTEXT("BrowseTooltip", "Load an existing image into Preview A"))
-                ]
-            ]
+            // ================================================================
+            // Qwen Settings
+            // ================================================================
+            +SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 8)
+                [MakeSectionHeader(LOCTEXT("QwenSection", "Qwen Settings"))]
 
-            // --- Preview A ---
-            + SVerticalBox::Slot().AutoHeight().Padding(0,10,0,5).HAlign(HAlign_Center)
-            [
-                SNew(SBox)
-                .WidthOverride_Lambda([this]() -> FOptionalSize {
-                    if (ImageBrushA.IsValid() && ImageBrushA->GetResourceObject())
-                    {
-                        const FVector2D S = ImageBrushA->ImageSize;
-                        if (S.X > 0 && S.Y > 0)
-                            return FOptionalSize(S.X * FMath::Min(FMath::Min(800.f/S.X, 600.f/S.Y), 1.f));
-                    }
-                    return FOptionalSize();
-                })
-                .HeightOverride_Lambda([this]() -> FOptionalSize {
-                    if (ImageBrushA.IsValid() && ImageBrushA->GetResourceObject())
-                    {
-                        const FVector2D S = ImageBrushA->ImageSize;
-                        if (S.X > 0 && S.Y > 0)
-                            return FOptionalSize(S.Y * FMath::Min(FMath::Min(800.f/S.X, 600.f/S.Y), 1.f));
-                    }
-                    return FOptionalSize();
-                })
-                [ SAssignNew(PreviewImageA, SImage) ]
-            ]
+                + SVerticalBox::Slot().AutoHeight().Padding(0, 4)
+                [
+                    SNew(SHorizontalBox)
+                        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
+                        [MakeLabel(LOCTEXT("QwenSteps", "Steps:"))]
+                        + SHorizontalBox::Slot().AutoWidth().Padding(10, 0, 0, 0)
+                        [
+                            SNew(SNumericEntryBox<int32>)
+                                .Value_Lambda([this]() { return TOptional<int32>(QwenSettings.Steps); })
+                                .OnValueChanged_Lambda([this](int32 V) { QwenSettings.Steps = V; })
+                                .MinValue(1).MaxValue(100).MinDesiredValueWidth(60)
+                        ]
+                ]
 
-            // --- Preview A Actions ---
-            + SVerticalBox::Slot().AutoHeight().Padding(0,5,0,15)
-            [
-                SNew(SHorizontalBox)
-                + SHorizontalBox::Slot().AutoWidth()
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 4)
                 [
-                    SNew(SButton)
-                    .Text(LOCTEXT("ImportAButton", "Import to Project"))
-                    .IsEnabled_Lambda([this]() { return !PreviewImagePathA.IsEmpty(); })
-                    .OnClicked_Lambda([this]() { return OnImportClicked(PreviewImagePathA); })
+                    SNew(SHorizontalBox)
+                        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
+                        [MakeLabel(LOCTEXT("QwenCFG", "CFG Scale:"))]
+                        + SHorizontalBox::Slot().AutoWidth().Padding(10, 0, 0, 0)
+                        [
+                            SNew(SNumericEntryBox<float>)
+                                .Value_Lambda([this]() { return TOptional<float>(QwenSettings.CFGScale); })
+                                .OnValueChanged_Lambda([this](float V) { QwenSettings.CFGScale = V; })
+                                .MinValue(1.0f).MaxValue(20.0f).MinDesiredValueWidth(60)
+                        ]
                 ]
-                + SHorizontalBox::Slot().AutoWidth().Padding(10,0,0,0)
-                [
-                    SNew(SButton)
-                    .Text(LOCTEXT("ComposureAButton", "Apply to Composure"))
-                    .IsEnabled_Lambda([this]() { return !PreviewImagePathA.IsEmpty(); })
-                    .OnClicked_Lambda([this]() { return OnApplyToComposureClicked(PreviewImagePathA); })
-                ]
-                + SHorizontalBox::Slot().AutoWidth().Padding(10,0,0,0)
-                [
-                    SNew(SButton)
-                    .Text(LOCTEXT("360AButton", "Generate 360\u00b0 HDRI"))
-                    .IsEnabled_Lambda([this]() { return bIsComfyReady && !PreviewImagePathA.IsEmpty(); })
-                    .OnClicked_Lambda([this]() { return OnGenerate360Clicked(PreviewImagePathA); })
-                ]
-            ]
 
-            // --- Img2Img Section ---
-            + SVerticalBox::Slot().AutoHeight().Padding(0,5)
-            [
-                SNew(STextBlock)
-                .Text(LOCTEXT("Img2ImgLabel", "Refine / Edit (Img2Img):"))
-                .Font(FCoreStyle::GetDefaultFontStyle("Bold", 10))
-            ]
-            + SVerticalBox::Slot().AutoHeight().Padding(0,5,0,10)
-            [
-                SNew(SEditableTextBox)
-                .HintText(LOCTEXT("Img2ImgHint", "Describe the edit..."))
-                .Text(FText::FromString(Img2ImgPromptText))
-                .OnTextChanged_Lambda([this](const FText& T){ Img2ImgPromptText = T.ToString(); })
-            ]
-            + SVerticalBox::Slot().AutoHeight().Padding(0,0,0,5)
-            [
-                SNew(SButton)
-                .Text(LOCTEXT("Img2ImgButton", "Run Img2Img"))
-                .IsEnabled_Lambda([this]() { return bIsComfyReady && !PreviewImagePathA.IsEmpty(); })
-                .OnClicked(this, &SComfyUIPanel::OnImg2ImgClicked)
-                .ToolTipText(LOCTEXT("Img2ImgTooltip", "Refine the image in Preview A using the edit prompt above"))
-            ]
-
-            // --- Preview B ---
-            + SVerticalBox::Slot().AutoHeight().Padding(0,10,0,5).HAlign(HAlign_Center)
-            [
-                SNew(SBox)
-                .WidthOverride_Lambda([this]() -> FOptionalSize {
-                    if (ImageBrushB.IsValid() && ImageBrushB->GetResourceObject())
-                    {
-                        const FVector2D S = ImageBrushB->ImageSize;
-                        if (S.X > 0 && S.Y > 0)
-                            return FOptionalSize(S.X * FMath::Min(FMath::Min(800.f/S.X, 600.f/S.Y), 1.f));
-                    }
-                    return FOptionalSize();
-                })
-                .HeightOverride_Lambda([this]() -> FOptionalSize {
-                    if (ImageBrushB.IsValid() && ImageBrushB->GetResourceObject())
-                    {
-                        const FVector2D S = ImageBrushB->ImageSize;
-                        if (S.X > 0 && S.Y > 0)
-                            return FOptionalSize(S.Y * FMath::Min(FMath::Min(800.f/S.X, 600.f/S.Y), 1.f));
-                    }
-                    return FOptionalSize();
-                })
-                [ SAssignNew(PreviewImageB, SImage) ]
-            ]
-
-            // --- Preview B Actions ---
-            + SVerticalBox::Slot().AutoHeight().Padding(0,5,0,15)
-            [
-                SNew(SHorizontalBox)
-                + SHorizontalBox::Slot().AutoWidth()
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 4)
                 [
-                    SNew(SButton)
-                    .Text(LOCTEXT("ImportBButton", "Import to Project"))
-                    .IsEnabled_Lambda([this]() { return !PreviewImagePathB.IsEmpty(); })
-                    .OnClicked_Lambda([this]() { return OnImportClicked(PreviewImagePathB); })
+                    SNew(SHorizontalBox)
+                        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
+                        [MakeLabel(LOCTEXT("QwenShift", "Shift:"))]
+                        + SHorizontalBox::Slot().AutoWidth().Padding(10, 0, 0, 0)
+                        [
+                            SNew(SNumericEntryBox<float>)
+                                .Value_Lambda([this]() { return TOptional<float>(QwenSettings.Shift); })
+                                .OnValueChanged_Lambda([this](float V) { QwenSettings.Shift = V; })
+                                .MinValue(0.0f).MaxValue(20.0f).MinDesiredValueWidth(60)
+                        ]
                 ]
-                + SHorizontalBox::Slot().AutoWidth().Padding(10,0,0,0)
-                [
-                    SNew(SButton)
-                    .Text(LOCTEXT("ComposureBButton", "Apply to Composure"))
-                    .IsEnabled_Lambda([this]() { return !PreviewImagePathB.IsEmpty(); })
-                    .OnClicked_Lambda([this]() { return OnApplyToComposureClicked(PreviewImagePathB); })
-                ]
-                + SHorizontalBox::Slot().AutoWidth().Padding(10,0,0,0)
-                [
-                    SNew(SButton)
-                    .Text(LOCTEXT("360BButton", "Generate 360\u00b0 HDRI"))
-                    .IsEnabled_Lambda([this]() { return bIsComfyReady && !PreviewImagePathB.IsEmpty(); })
-                    .OnClicked_Lambda([this]() { return OnGenerate360Clicked(PreviewImagePathB); })
-                ]
-            ]
 
-            // --- Status ---
-            + SVerticalBox::Slot().AutoHeight().Padding(0,5)
-            [
-                SNew(STextBlock)
-                .Text_Lambda([this]() { return FText::FromString(StatusText); })
-                .Justification(ETextJustify::Center)
-                .ColorAndOpacity_Lambda([this]() {
-                    if (StatusText.Contains("Error") || StatusText.Contains("Offline"))
-                        return FLinearColor::Red;
-                    if (StatusText.Contains("Generating") || StatusText.Contains("Waiting")
-                        || StatusText.Contains("Uploading") || StatusText.Contains("Running")
-                        || StatusText.Contains("Downloading"))
-                        return FLinearColor::Yellow;
-                    return FLinearColor::White;
-                })
-            ]
-        ]
-    ];
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 4)
+                [
+                    SNew(SHorizontalBox)
+                        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
+                        [MakeLabel(LOCTEXT("QwenSampler", "Sampler:"))]
+                        + SHorizontalBox::Slot().AutoWidth().Padding(10, 0, 0, 0)
+                        [
+                            SNew(SComboBox<TSharedPtr<FString>>)
+                                .OptionsSource(&SamplerOptions)
+                                .OnSelectionChanged_Lambda([this](TSharedPtr<FString> Val, ESelectInfo::Type) {
+                                QwenSelectedSampler = Val;
+                                QwenSettings.Sampler = *Val;
+                                    })
+                                .OnGenerateWidget_Lambda([](TSharedPtr<FString> Item) {
+                                return SNew(STextBlock).Text(FText::FromString(*Item));
+                                    })
+                                .InitiallySelectedItem(QwenSelectedSampler)
+                                [SNew(STextBlock).Text_Lambda([this]() {
+                                return FText::FromString(QwenSelectedSampler.IsValid() ? *QwenSelectedSampler : TEXT("res_multistep"));
+                                    })]
+                        ]
+                ]
+
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 4, 0, 20)
+                [
+                    SNew(SHorizontalBox)
+                        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
+                        [MakeLabel(LOCTEXT("QwenScheduler", "Scheduler:"))]
+                        + SHorizontalBox::Slot().AutoWidth().Padding(10, 0, 0, 0)
+                        [
+                            SNew(SComboBox<TSharedPtr<FString>>)
+                                .OptionsSource(&SchedulerOptions)
+                                .OnSelectionChanged_Lambda([this](TSharedPtr<FString> Val, ESelectInfo::Type) {
+                                QwenSelectedScheduler = Val;
+                                QwenSettings.Scheduler = *Val;
+                                    })
+                                .OnGenerateWidget_Lambda([](TSharedPtr<FString> Item) {
+                                return SNew(STextBlock).Text(FText::FromString(*Item));
+                                    })
+                                .InitiallySelectedItem(QwenSelectedScheduler)
+                                [SNew(STextBlock).Text_Lambda([this]() {
+                                return FText::FromString(QwenSelectedScheduler.IsValid() ? *QwenSelectedScheduler : TEXT("simple"));
+                                    })]
+                        ]
+                ]
+
+            // ================================================================
+            // Flux Settings
+            // ================================================================
+            +SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 8)
+                [MakeSectionHeader(LOCTEXT("FluxSection", "Flux Settings"))]
+
+                + SVerticalBox::Slot().AutoHeight().Padding(0, 4)
+                [
+                    SNew(SHorizontalBox)
+                        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
+                        [MakeLabel(LOCTEXT("FluxSteps", "Steps:"))]
+                        + SHorizontalBox::Slot().AutoWidth().Padding(10, 0, 0, 0)
+                        [
+                            SNew(SNumericEntryBox<int32>)
+                                .Value_Lambda([this]() { return TOptional<int32>(FluxSettings.Steps); })
+                                .OnValueChanged_Lambda([this](int32 V) { FluxSettings.Steps = V; })
+                                .MinValue(1).MaxValue(50).MinDesiredValueWidth(60)
+                        ]
+                ]
+
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 4)
+                [
+                    SNew(SHorizontalBox)
+                        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
+                        [MakeLabel(LOCTEXT("FluxCFG", "CFG Scale:"))]
+                        + SHorizontalBox::Slot().AutoWidth().Padding(10, 0, 0, 0)
+                        [
+                            SNew(SNumericEntryBox<float>)
+                                .Value_Lambda([this]() { return TOptional<float>(FluxSettings.CFGScale); })
+                                .OnValueChanged_Lambda([this](float V) { FluxSettings.CFGScale = V; })
+                                .MinValue(0.0f).MaxValue(10.0f).MinDesiredValueWidth(60)
+                        ]
+                ]
+
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 4)
+                [
+                    SNew(SHorizontalBox)
+                        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
+                        [MakeLabel(LOCTEXT("FluxSampler", "Sampler:"))]
+                        + SHorizontalBox::Slot().AutoWidth().Padding(10, 0, 0, 0)
+                        [
+                            SNew(SComboBox<TSharedPtr<FString>>)
+                                .OptionsSource(&SamplerOptions)
+                                .OnSelectionChanged_Lambda([this](TSharedPtr<FString> Val, ESelectInfo::Type) {
+                                FluxSelectedSampler = Val;
+                                FluxSettings.Sampler = *Val;
+                                    })
+                                .OnGenerateWidget_Lambda([](TSharedPtr<FString> Item) {
+                                return SNew(STextBlock).Text(FText::FromString(*Item));
+                                    })
+                                .InitiallySelectedItem(FluxSelectedSampler)
+                                [SNew(STextBlock).Text_Lambda([this]() {
+                                return FText::FromString(FluxSelectedSampler.IsValid() ? *FluxSelectedSampler : TEXT("euler"));
+                                    })]
+                        ]
+                ]
+
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 4)
+                [
+                    SNew(SHorizontalBox)
+                        + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
+                        [MakeLabel(LOCTEXT("FluxScheduler", "Scheduler:"))]
+                        + SHorizontalBox::Slot().AutoWidth().Padding(10, 0, 0, 0)
+                        [
+                            SNew(SComboBox<TSharedPtr<FString>>)
+                                .OptionsSource(&SchedulerOptions)
+                                .OnSelectionChanged_Lambda([this](TSharedPtr<FString> Val, ESelectInfo::Type) {
+                                FluxSelectedScheduler = Val;
+                                FluxSettings.Scheduler = *Val;
+                                    })
+                                .OnGenerateWidget_Lambda([](TSharedPtr<FString> Item) {
+                                return SNew(STextBlock).Text(FText::FromString(*Item));
+                                    })
+                                .InitiallySelectedItem(FluxSelectedScheduler)
+                                [SNew(STextBlock).Text_Lambda([this]() {
+                                return FText::FromString(FluxSelectedScheduler.IsValid() ? *FluxSelectedScheduler : TEXT("normal"));
+                                    })]
+                        ]
+                ]
+        ];
 }
 
 // ============================================================================
@@ -646,6 +913,11 @@ void SComfyUIPanel::StartGeneration()
         QwenParams.Height = Height;
         QwenParams.FilenamePrefix = CurrentFilenamePrefix;
         QwenParams.Seed = FMath::Abs((int32)(FDateTime::Now().GetTicks() % MAX_int32));
+        QwenParams.Steps = QwenSettings.Steps;
+        QwenParams.CFGScale = QwenSettings.CFGScale;
+        QwenParams.Shift = QwenSettings.Shift;
+        QwenParams.Sampler = QwenSettings.Sampler;
+        QwenParams.Scheduler = QwenSettings.Scheduler;
         WorkflowParams.WorkflowJson = UComfyUIBlueprintLibrary::BuildQwenGenerateWorkflowJson(QwenParams);
     }
     else
@@ -657,6 +929,10 @@ void SComfyUIPanel::StartGeneration()
         FluxParams.Height = Height;
         FluxParams.FilenamePrefix = CurrentFilenamePrefix;
         FluxParams.Seed = FMath::Abs((int32)(FDateTime::Now().GetTicks() % MAX_int32));
+        FluxParams.Steps = FluxSettings.Steps;
+        FluxParams.CFGScale = FluxSettings.CFGScale;
+        FluxParams.Sampler = FluxSettings.Sampler;
+        FluxParams.Scheduler = FluxSettings.Scheduler;
         WorkflowParams.WorkflowJson = UComfyUIBlueprintLibrary::BuildFlux2WorkflowJson(FluxParams);
     }
 
@@ -685,7 +961,14 @@ void SComfyUIPanel::StartImg2Img()
         QwenParams.Instruction = Img2ImgPromptText;
         QwenParams.InputImageFilename = NodeImageValue;
         QwenParams.Seed = FMath::Abs((int32)(FDateTime::Now().GetTicks() % MAX_int32));
+        QwenParams.Steps = QwenSettings.Steps;
+        QwenParams.CFGScale = QwenSettings.CFGScale;
+        QwenParams.Shift = QwenSettings.Shift;
+        QwenParams.Sampler = QwenSettings.Sampler;
+        QwenParams.Scheduler = QwenSettings.Scheduler;
         WorkflowParams.WorkflowJson = UComfyUIBlueprintLibrary::BuildQwenEditWorkflowJson(QwenParams);
+
+        
     }
     else
     {

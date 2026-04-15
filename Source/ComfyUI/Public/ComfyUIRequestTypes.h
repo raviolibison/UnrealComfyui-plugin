@@ -91,6 +91,9 @@ struct FComfyUIFlux2WorkflowParams
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ComfyUI")
     FString Sampler = TEXT("euler");
+    
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ComfyUI")
+    FString Scheduler = TEXT("normal");
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ComfyUI")
     FString FilenamePrefix = TEXT("UE_Flux2");

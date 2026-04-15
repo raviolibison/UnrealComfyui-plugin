@@ -387,6 +387,7 @@ FString UComfyUIBlueprintLibrary::BuildFlux2WorkflowJson(const FComfyUIFlux2Work
     SetInputNumber(SchedulerNode, TEXT("steps"), Params.Steps);
     SetInputNumber(SchedulerNode, TEXT("width"), Params.Width);  
     SetInputNumber(SchedulerNode, TEXT("height"), Params.Height);
+    SetInputString(SchedulerNode, TEXT("scheduler"), Params.Scheduler);
     Graph->SetObjectField(FString::FromInt(SchedulerId), SchedulerNode);
 
     // SamplerCustomAdvanced
