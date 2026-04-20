@@ -40,21 +40,6 @@
 void SComfyUIPanel::Construct(const FArguments& InArgs)
 {
 
-   
-    SelectedResolution.Reset();
-    SelectedModelFamilyOption.Reset();
-    SelectedImg2ImgUpscaleOption.Reset();
-    QwenSelectedSampler.Reset();
-    QwenSelectedScheduler.Reset();
-    FluxSelectedSampler.Reset();
-    FluxSelectedScheduler.Reset();
-    PreviewImageA.Reset();
-    PreviewImageB.Reset();
-    ImageBrushA.Reset();
-    ImageBrushB.Reset();
-    TabSwitcher.Reset();
-    LastImportedTexture.Reset();
-
     // ---- Model family options -----------------------------------------------
     ModelFamilyOptions.Add(MakeShared<FString>(TEXT("Flux")));
     ModelFamilyOptions.Add(MakeShared<FString>(TEXT("Qwen")));
@@ -80,22 +65,22 @@ void SComfyUIPanel::Construct(const FArguments& InArgs)
     auto FindOption = [](TArray<TSharedPtr<FString>>& Opts,
         const FString& Val) -> TSharedPtr<FString>
         {
-            if (Opts.Num() == 0) return nullptr; 
+            if (Opts.Num() == 0) return nullptr;
             for (auto& O : Opts) if (*O == Val) return O;
             return Opts[0];
         };
 
-    QwenSelectedSampler = FindOption(SamplerOptions, QwenSettings.Sampler);
+    QwenSelectedSampler   = FindOption(SamplerOptions,   QwenSettings.Sampler);
     QwenSelectedScheduler = FindOption(SchedulerOptions, QwenSettings.Scheduler);
-    FluxSelectedSampler = FindOption(SamplerOptions, FluxSettings.Sampler);
+    FluxSelectedSampler   = FindOption(SamplerOptions,   FluxSettings.Sampler);
     FluxSelectedScheduler = FindOption(SchedulerOptions, FluxSettings.Scheduler);
 
     // ---- Resolution presets (model-aware) -----------------------------------
-    RebuildResolutionOptions();   // populates ResolutionOptions, sets SelectedResolution
+    RebuildResolutionOptions();
 
     // ---- Status / polling ---------------------------------------------------
     StatusText = TEXT("Connecting...");
-    WeakThis = SharedThis(this);
+    WeakThis   = SharedThis(this);
     PollComfyConnection();
 
     ChildSlot
@@ -199,6 +184,7 @@ TSharedRef<SWidget> SComfyUIPanel::BuildGenerateTab()
                         .OnTextChanged(this, &SComfyUIPanel::OnNegativePromptTextChanged)
                 ]
 
+                // --- Resolution ---
                 + SVerticalBox::Slot().AutoHeight().Padding(0, 5)
                 [
                     SNew(SHorizontalBox)
@@ -218,8 +204,6 @@ TSharedRef<SWidget> SComfyUIPanel::BuildGenerateTab()
                                     return SNew(STextBlock).Text(FText::GetEmpty());
                                 return SNew(STextBlock).Text(FText::FromString(Item->Label));
                                     })
-                                // Do NOT pass InitiallySelectedItem — let the combo default to the
-                                // first entry.  We drive the displayed text via the child lambda.
                                 [
                                     SNew(STextBlock).Text_Lambda([this]() -> FText {
                                         if (!SelectedResolution.IsValid())
@@ -380,18 +364,21 @@ TSharedRef<SWidget> SComfyUIPanel::BuildGenerateTab()
                             SNew(SComboBox<TSharedPtr<FString>>)
                                 .OptionsSource(&Img2ImgUpscaleOptions)
                                 .OnSelectionChanged_Lambda([this](TSharedPtr<FString> Val, ESelectInfo::Type) {
+                                if (!Val.IsValid()) return;
                                 SelectedImg2ImgUpscaleOption = Val;
-                                if (*Val == TEXT("2x Upscale"))      Img2ImgUpscaleMode = EUpscaleMode::TwoX;
-                                else if (*Val == TEXT("4x Upscale")) Img2ImgUpscaleMode = EUpscaleMode::FourX;
+                                // Match against the actual option strings (lowercase)
+                                if (*Val == TEXT("2x upscale"))      Img2ImgUpscaleMode = EUpscaleMode::TwoX;
+                                else if (*Val == TEXT("4x upscale")) Img2ImgUpscaleMode = EUpscaleMode::FourX;
                                 else                                  Img2ImgUpscaleMode = EUpscaleMode::None;
                                     })
-                                .OnGenerateWidget_Lambda([](TSharedPtr<FString> Item) {
+                                .OnGenerateWidget_Lambda([](TSharedPtr<FString> Item) -> TSharedRef<SWidget> {
+                                if (!Item.IsValid()) return SNew(STextBlock).Text(FText::GetEmpty());
                                 return SNew(STextBlock).Text(FText::FromString(*Item));
                                     })
                                 .InitiallySelectedItem(SelectedImg2ImgUpscaleOption)
                                 [SNew(STextBlock).Text_Lambda([this]() {
                                 return FText::FromString(SelectedImg2ImgUpscaleOption.IsValid()
-                                    ? *SelectedImg2ImgUpscaleOption : TEXT("No Upscale"));
+                                    ? *SelectedImg2ImgUpscaleOption : TEXT("No upscale"));
                                     })]
                         ]
                 ]
@@ -510,12 +497,14 @@ TSharedRef<SWidget> SComfyUIPanel::BuildSettingsTab()
                             SNew(SComboBox<TSharedPtr<FString>>)
                                 .OptionsSource(&ModelFamilyOptions)
                                 .OnSelectionChanged(this, &SComfyUIPanel::OnModelFamilyChanged)
-                                .OnGenerateWidget_Lambda([](TSharedPtr<FString> Item) {
+                                .OnGenerateWidget_Lambda([](TSharedPtr<FString> Item) -> TSharedRef<SWidget> {
+                                if (!Item.IsValid()) return SNew(STextBlock).Text(FText::GetEmpty());
                                 return SNew(STextBlock).Text(FText::FromString(*Item));
                                     })
                                 .InitiallySelectedItem(SelectedModelFamilyOption)
                                 [SNew(STextBlock).Text_Lambda([this]() {
-                                return FText::FromString(*SelectedModelFamilyOption);
+                                return FText::FromString(SelectedModelFamilyOption.IsValid()
+                                    ? *SelectedModelFamilyOption : TEXT("Qwen"));
                                     })]
                         ]
                 ]
@@ -578,10 +567,12 @@ TSharedRef<SWidget> SComfyUIPanel::BuildSettingsTab()
                             SNew(SComboBox<TSharedPtr<FString>>)
                                 .OptionsSource(&SamplerOptions)
                                 .OnSelectionChanged_Lambda([this](TSharedPtr<FString> Val, ESelectInfo::Type) {
+                                if (!Val.IsValid()) return;
                                 QwenSelectedSampler = Val;
                                 QwenSettings.Sampler = *Val;
                                     })
-                                .OnGenerateWidget_Lambda([](TSharedPtr<FString> Item) {
+                                .OnGenerateWidget_Lambda([](TSharedPtr<FString> Item) -> TSharedRef<SWidget> {
+                                if (!Item.IsValid()) return SNew(STextBlock).Text(FText::GetEmpty());
                                 return SNew(STextBlock).Text(FText::FromString(*Item));
                                     })
                                 .InitiallySelectedItem(QwenSelectedSampler)
@@ -601,10 +592,12 @@ TSharedRef<SWidget> SComfyUIPanel::BuildSettingsTab()
                             SNew(SComboBox<TSharedPtr<FString>>)
                                 .OptionsSource(&SchedulerOptions)
                                 .OnSelectionChanged_Lambda([this](TSharedPtr<FString> Val, ESelectInfo::Type) {
+                                if (!Val.IsValid()) return;
                                 QwenSelectedScheduler = Val;
                                 QwenSettings.Scheduler = *Val;
                                     })
-                                .OnGenerateWidget_Lambda([](TSharedPtr<FString> Item) {
+                                .OnGenerateWidget_Lambda([](TSharedPtr<FString> Item) -> TSharedRef<SWidget> {
+                                if (!Item.IsValid()) return SNew(STextBlock).Text(FText::GetEmpty());
                                 return SNew(STextBlock).Text(FText::FromString(*Item));
                                     })
                                 .InitiallySelectedItem(QwenSelectedScheduler)
@@ -658,10 +651,12 @@ TSharedRef<SWidget> SComfyUIPanel::BuildSettingsTab()
                             SNew(SComboBox<TSharedPtr<FString>>)
                                 .OptionsSource(&SamplerOptions)
                                 .OnSelectionChanged_Lambda([this](TSharedPtr<FString> Val, ESelectInfo::Type) {
+                                if (!Val.IsValid()) return;
                                 FluxSelectedSampler = Val;
                                 FluxSettings.Sampler = *Val;
                                     })
-                                .OnGenerateWidget_Lambda([](TSharedPtr<FString> Item) {
+                                .OnGenerateWidget_Lambda([](TSharedPtr<FString> Item) -> TSharedRef<SWidget> {
+                                if (!Item.IsValid()) return SNew(STextBlock).Text(FText::GetEmpty());
                                 return SNew(STextBlock).Text(FText::FromString(*Item));
                                     })
                                 .InitiallySelectedItem(FluxSelectedSampler)
@@ -681,15 +676,17 @@ TSharedRef<SWidget> SComfyUIPanel::BuildSettingsTab()
                             SNew(SComboBox<TSharedPtr<FString>>)
                                 .OptionsSource(&SchedulerOptions)
                                 .OnSelectionChanged_Lambda([this](TSharedPtr<FString> Val, ESelectInfo::Type) {
+                                if (!Val.IsValid()) return;
                                 FluxSelectedScheduler = Val;
                                 FluxSettings.Scheduler = *Val;
                                     })
-                                .OnGenerateWidget_Lambda([](TSharedPtr<FString> Item) {
+                                .OnGenerateWidget_Lambda([](TSharedPtr<FString> Item) -> TSharedRef<SWidget> {
+                                if (!Item.IsValid()) return SNew(STextBlock).Text(FText::GetEmpty());
                                 return SNew(STextBlock).Text(FText::FromString(*Item));
                                     })
                                 .InitiallySelectedItem(FluxSelectedScheduler)
                                 [SNew(STextBlock).Text_Lambda([this]() {
-                                return FText::FromString(FluxSelectedScheduler.IsValid() ? *FluxSelectedScheduler : TEXT("normal"));
+                                return FText::FromString(FluxSelectedScheduler.IsValid() ? *FluxSelectedScheduler : TEXT("simple"));
                                     })]
                         ]
                 ]
@@ -697,7 +694,7 @@ TSharedRef<SWidget> SComfyUIPanel::BuildSettingsTab()
 }
 
 // ============================================================================
-// Generic Workflow System
+// Resolution Helpers
 // ============================================================================
 
 void SComfyUIPanel::AddResPreset(const FString& Label,
@@ -706,13 +703,13 @@ void SComfyUIPanel::AddResPreset(const FString& Label,
     int32 FinalW, int32 FinalH)
 {
     auto Opt = MakeShared<FResolutionOption>();
-    Opt->Label = Label;
-    Opt->GenWidth = GenW;
-    Opt->GenHeight = GenH;
-    Opt->FinalWidth = FinalW;
+    Opt->Label       = Label;
+    Opt->GenWidth    = GenW;
+    Opt->GenHeight   = GenH;
+    Opt->FinalWidth  = FinalW;
     Opt->FinalHeight = FinalH;
     Opt->UpscaleMode = Mode;
-    Opt->bIsCustom = false;
+    Opt->bIsCustom   = false;
     ResolutionOptions.Add(Opt);
 }
 
@@ -722,85 +719,65 @@ void SComfyUIPanel::RebuildResolutionOptions()
 
     if (SelectedModelFamily == EComfyUIModelFamily::Qwen)
     {
-        // ── Native generation (no upscale) ──────────────────────────────────
-        //   Qwen 2512 native training res: 1328×1328 (~1.77 MP)
-        //   Practical fast alternative: 1024×1024
-        //   Non-square targets same ~1.77 MP budget → 1536×864, 864×1536
-        AddResPreset(TEXT("1024×1024"), 1024, 1024, EUpscaleMode::None, 1024, 1024);
-        AddResPreset(TEXT("1328×1328 (native)"), 1328, 1328, EUpscaleMode::None, 1328, 1328);
-        AddResPreset(TEXT("1280×720"), 1280, 720, EUpscaleMode::None, 1280, 720);
-        AddResPreset(TEXT("1536×864"), 1536, 864, EUpscaleMode::None, 1536, 864);
-        AddResPreset(TEXT("720×1280"), 720, 1280, EUpscaleMode::None, 720, 1280);
-        AddResPreset(TEXT("864×1536"), 864, 1536, EUpscaleMode::None, 864, 1536);
-
-        // ── 2x upscale ───────────────────────────────────────────────────────
-        AddResPreset(TEXT("2048×2048"), 1024, 1024, EUpscaleMode::TwoX, 2048, 2048);
-        AddResPreset(TEXT("2656×2656"), 1328, 1328, EUpscaleMode::TwoX, 2656, 2656);
-        AddResPreset(TEXT("2560×1440"), 1280, 720, EUpscaleMode::TwoX, 2560, 1440);
-        AddResPreset(TEXT("3072×1728"), 1536, 864, EUpscaleMode::TwoX, 3072, 1728);
-        AddResPreset(TEXT("1440×2560"), 720, 1280, EUpscaleMode::TwoX, 1440, 2560);
-        AddResPreset(TEXT("1728×3072"), 864, 1536, EUpscaleMode::TwoX, 1728, 3072);
-
-        // ── 4x upscale ───────────────────────────────────────────────────────
-        AddResPreset(TEXT("4096×4096"), 1024, 1024, EUpscaleMode::FourX, 4096, 4096);
-        AddResPreset(TEXT("5120×2880"), 1280, 720, EUpscaleMode::FourX, 5120, 2880);
-        AddResPreset(TEXT("2880×5120"), 720, 1280, EUpscaleMode::FourX, 2880, 5120);
+        // Native generation
+        AddResPreset(TEXT("1024x1024"),          1024, 1024, EUpscaleMode::None,  1024,  1024);
+        AddResPreset(TEXT("1328x1328 (native)"), 1328, 1328, EUpscaleMode::None,  1328,  1328);
+        AddResPreset(TEXT("1280x720"),           1280,  720, EUpscaleMode::None,  1280,   720);
+        AddResPreset(TEXT("1536x864"),           1536,  864, EUpscaleMode::None,  1536,   864);
+        AddResPreset(TEXT("720x1280"),            720, 1280, EUpscaleMode::None,   720,  1280);
+        AddResPreset(TEXT("864x1536"),            864, 1536, EUpscaleMode::None,   864,  1536);
+        // 2x upscale
+        AddResPreset(TEXT("2048x2048"),          1024, 1024, EUpscaleMode::TwoX,  2048,  2048);
+        AddResPreset(TEXT("2656x2656"),          1328, 1328, EUpscaleMode::TwoX,  2656,  2656);
+        AddResPreset(TEXT("2560x1440"),          1280,  720, EUpscaleMode::TwoX,  2560,  1440);
+        AddResPreset(TEXT("3072x1728"),          1536,  864, EUpscaleMode::TwoX,  3072,  1728);
+        AddResPreset(TEXT("1440x2560"),           720, 1280, EUpscaleMode::TwoX,  1440,  2560);
+        AddResPreset(TEXT("1728x3072"),           864, 1536, EUpscaleMode::TwoX,  1728,  3072);
+        // 4x upscale
+        AddResPreset(TEXT("4096x4096"),          1024, 1024, EUpscaleMode::FourX, 4096,  4096);
+        AddResPreset(TEXT("5120x2880"),          1280,  720, EUpscaleMode::FourX, 5120,  2880);
+        AddResPreset(TEXT("2880x5120"),           720, 1280, EUpscaleMode::FourX, 2880,  5120);
     }
     else // Flux.2 Klein 4B
     {
-        // ── Native generation (no upscale) ──────────────────────────────────
-        //   Flux.2 Klein supports up to 4 MP; sweet spot 1–2 MP.
-        AddResPreset(TEXT("1024×1024"), 1024, 1024, EUpscaleMode::None, 1024, 1024);
-        AddResPreset(TEXT("1280×720"), 1280, 720, EUpscaleMode::None, 1280, 720);
-        AddResPreset(TEXT("1536×864"), 1536, 864, EUpscaleMode::None, 1536, 864);
-        AddResPreset(TEXT("1920×1080"), 1920, 1080, EUpscaleMode::None, 1920, 1080);
-        AddResPreset(TEXT("720×1280"), 720, 1280, EUpscaleMode::None, 720, 1280);
-        AddResPreset(TEXT("864×1536"), 864, 1536, EUpscaleMode::None, 864, 1536);
-        AddResPreset(TEXT("1080×1920"), 1080, 1920, EUpscaleMode::None, 1080, 1920);
-
-        // ── 2x upscale ───────────────────────────────────────────────────────
-        AddResPreset(TEXT("2048×2048"), 1024, 1024, EUpscaleMode::TwoX, 2048, 2048);
-        AddResPreset(TEXT("2560×1440"), 1280, 720, EUpscaleMode::TwoX, 2560, 1440);
-        AddResPreset(TEXT("3072×1728"), 1536, 864, EUpscaleMode::TwoX, 3072, 1728);
-        AddResPreset(TEXT("3840×2160"), 1920, 1080, EUpscaleMode::TwoX, 3840, 2160);
-        AddResPreset(TEXT("1440×2560"), 720, 1280, EUpscaleMode::TwoX, 1440, 2560);
-        AddResPreset(TEXT("1728×3072"), 864, 1536, EUpscaleMode::TwoX, 1728, 3072);
-        AddResPreset(TEXT("2160×3840"), 1080, 1920, EUpscaleMode::TwoX, 2160, 3840);
-
-        // ── 4x upscale ───────────────────────────────────────────────────────
-        AddResPreset(TEXT("4096×4096"), 1024, 1024, EUpscaleMode::FourX, 4096, 4096);
-        AddResPreset(TEXT("5120×2880"), 1280, 720, EUpscaleMode::FourX, 5120, 2880);
-        AddResPreset(TEXT("7680×4320"), 1920, 1080, EUpscaleMode::FourX, 7680, 4320);
-        AddResPreset(TEXT("2880×5120"), 720, 1280, EUpscaleMode::FourX, 2880, 5120);
-        AddResPreset(TEXT("4320×7680"), 1080, 1920, EUpscaleMode::FourX, 4320, 7680);
+        // Native generation
+        AddResPreset(TEXT("1024x1024"),  1024, 1024, EUpscaleMode::None,  1024,  1024);
+        AddResPreset(TEXT("1280x720"),   1280,  720, EUpscaleMode::None,  1280,   720);
+        AddResPreset(TEXT("1536x864"),   1536,  864, EUpscaleMode::None,  1536,   864);
+        AddResPreset(TEXT("1920x1080"),  1920, 1080, EUpscaleMode::None,  1920,  1080);
+        AddResPreset(TEXT("720x1280"),    720, 1280, EUpscaleMode::None,   720,  1280);
+        AddResPreset(TEXT("864x1536"),    864, 1536, EUpscaleMode::None,   864,  1536);
+        AddResPreset(TEXT("1080x1920"),  1080, 1920, EUpscaleMode::None,  1080,  1920);
+        // 2x upscale
+        AddResPreset(TEXT("2048x2048"),  1024, 1024, EUpscaleMode::TwoX,  2048,  2048);
+        AddResPreset(TEXT("2560x1440"),  1280,  720, EUpscaleMode::TwoX,  2560,  1440);
+        AddResPreset(TEXT("3072x1728"),  1536,  864, EUpscaleMode::TwoX,  3072,  1728);
+        AddResPreset(TEXT("3840x2160"),  1920, 1080, EUpscaleMode::TwoX,  3840,  2160);
+        AddResPreset(TEXT("1440x2560"),   720, 1280, EUpscaleMode::TwoX,  1440,  2560);
+        AddResPreset(TEXT("1728x3072"),   864, 1536, EUpscaleMode::TwoX,  1728,  3072);
+        AddResPreset(TEXT("2160x3840"),  1080, 1920, EUpscaleMode::TwoX,  2160,  3840);
+        // 4x upscale
+        AddResPreset(TEXT("4096x4096"),  1024, 1024, EUpscaleMode::FourX, 4096,  4096);
+        AddResPreset(TEXT("5120x2880"),  1280,  720, EUpscaleMode::FourX, 5120,  2880);
+        AddResPreset(TEXT("7680x4320"),  1920, 1080, EUpscaleMode::FourX, 7680,  4320);
+        AddResPreset(TEXT("2880x5120"),   720, 1280, EUpscaleMode::FourX, 2880,  5120);
+        AddResPreset(TEXT("4320x7680"),  1080, 1920, EUpscaleMode::FourX, 4320,  7680);
     }
 
-    // ── Custom (always last) ─────────────────────────────────────────────────
-    auto CustomOpt = MakeShared<FResolutionOption>();
-    CustomOpt->Label = TEXT("Custom...");
-    CustomOpt->GenWidth = CustomWidth;
-    CustomOpt->GenHeight = CustomHeight;
-    CustomOpt->FinalWidth = CustomWidth;
+    // Custom — always last
+    auto CustomOpt         = MakeShared<FResolutionOption>();
+    CustomOpt->Label       = TEXT("Custom...");
+    CustomOpt->GenWidth    = CustomWidth;
+    CustomOpt->GenHeight   = CustomHeight;
+    CustomOpt->FinalWidth  = CustomWidth;
     CustomOpt->FinalHeight = CustomHeight;
     CustomOpt->UpscaleMode = EUpscaleMode::None;
-    CustomOpt->bIsCustom = true;
+    CustomOpt->bIsCustom   = true;
     ResolutionOptions.Add(CustomOpt);
 
-    // Safety check — should never happen, but guard anyway
-    if (ResolutionOptions.Num() == 0)
-    {
-        auto Fallback = MakeShared<FResolutionOption>();
-        Fallback->Label = TEXT("1024×1024");
-        Fallback->GenWidth = 1024;
-        Fallback->GenHeight = 1024;
-        Fallback->FinalWidth = 1024;
-        Fallback->FinalHeight = 1024;
-        ResolutionOptions.Add(Fallback);
-    }
-
-    // Try to restore previous selection by label; always fall back to index 0.
+    // Restore previous selection by label, else default to first preset
     FString PrevLabel = SelectedResolution.IsValid() ? SelectedResolution->Label : TEXT("");
-    SelectedResolution = ResolutionOptions[0];   // guaranteed non-null
+    SelectedResolution = ResolutionOptions[0];
 
     for (auto& Opt : ResolutionOptions)
     {
@@ -810,9 +787,6 @@ void SComfyUIPanel::RebuildResolutionOptions()
             break;
         }
     }
-
-    // Final paranoia check
-    check(SelectedResolution.IsValid());
 }
 
 void SComfyUIPanel::GetEffectiveResolution(int32& OutGenW, int32& OutGenH,
@@ -825,8 +799,8 @@ void SComfyUIPanel::GetEffectiveResolution(int32& OutGenW, int32& OutGenH,
     }
     else if (SelectedResolution.IsValid())
     {
-        OutGenW = SelectedResolution->GenWidth;
-        OutGenH = SelectedResolution->GenHeight;
+        OutGenW   = SelectedResolution->GenWidth;
+        OutGenH   = SelectedResolution->GenHeight;
         OutFinalW = SelectedResolution->FinalWidth;
         OutFinalH = SelectedResolution->FinalHeight;
     }
@@ -841,6 +815,10 @@ bool SComfyUIPanel::IsCustomResSelected() const
 {
     return SelectedResolution.IsValid() && SelectedResolution->bIsCustom;
 }
+
+// ============================================================================
+// Generic Workflow System
+// ============================================================================
 
 void SComfyUIPanel::SubmitWorkflow(const FComfyWorkflowParams& Params)
 {
@@ -888,11 +866,18 @@ void SComfyUIPanel::SubmitWorkflow(const FComfyWorkflowParams& Params)
             const TSharedRef<TJsonReader<>> JsonReader = TJsonReaderFactory<>::Create(Response->GetContentAsString());
             if (!FJsonSerializer::Deserialize(JsonReader, JsonResponse) || !JsonResponse.IsValid())
             {
-                Panel->UpdateStatus(TEXT("Error: Could not parse prompt_id"));
+                Panel->UpdateStatus(TEXT("Error: Could not parse server response"));
                 return;
             }
 
-            FString PromptId = JsonResponse->GetStringField(TEXT("prompt_id"));
+            // Fix #3: use TryGetStringField instead of GetStringField
+            FString PromptId;
+            if (!JsonResponse->TryGetStringField(TEXT("prompt_id"), PromptId) || PromptId.IsEmpty())
+            {
+                Panel->UpdateStatus(TEXT("Error: No prompt_id in response"));
+                return;
+            }
+
             Panel->CurrentPromptId = PromptId;
             Panel->UpdateStatus(CapturedParams.RunningStatus);
 
@@ -910,14 +895,11 @@ void SComfyUIPanel::SubmitWorkflow(const FComfyWorkflowParams& Params)
                     .Replace(TEXT("https://"), TEXT("wss://"))
                     + TEXT("/ws?clientId=unrealplugin");
 
-                // Build the watch+register logic as a lambda so we can defer it
-                // until the socket is actually connected
                 auto RegisterWatcher = [CapturedWeakThis, CapturedParams, PromptId, WSHandler]()
                     {
                         TSharedPtr<SComfyUIPanel> InnerPanel = CapturedWeakThis.Pin();
                         if (!InnerPanel.IsValid()) return;
 
-                        // Clear our own previous stale watcher if any
                         if (!InnerPanel->CurrentPromptId.IsEmpty())
                             WSHandler->UnwatchPrompt(InnerPanel->CurrentPromptId);
 
@@ -935,12 +917,10 @@ void SComfyUIPanel::SubmitWorkflow(const FComfyWorkflowParams& Params)
 
                 if (WSHandler->IsConnected())
                 {
-                    // Already connected — register immediately
                     RegisterWatcher();
                 }
                 else
                 {
-                    // Not connected yet — defer registration until handshake completes
                     WSHandler->OnConnectedEvent.AddLambda([RegisterWatcher, WSHandler]()
                         {
                             RegisterWatcher();
@@ -957,10 +937,8 @@ void SComfyUIPanel::SubmitWorkflow(const FComfyWorkflowParams& Params)
 
 void SComfyUIPanel::OnWorkflowComplete(bool bSuccess, const FString& PromptId, FComfyWorkflowParams Params)
 {
-
     StopHistoryPoller();
 
-    // Clean up the watcher whether WS fired or poller fired
     if (FComfyUIModule* Module = FModuleManager::GetModulePtr<FComfyUIModule>(TEXT("ComfyUI")))
     {
         TSharedPtr<FComfyUIWebSocketHandler> WSHandler = Module->GetWebSocketHandler();
@@ -994,7 +972,6 @@ void SComfyUIPanel::OnWorkflowComplete(bool bSuccess, const FString& PromptId, F
                 TSharedPtr<SComfyUIPanel> Panel = CapturedWeakThis.Pin();
                 if (!Panel.IsValid()) return;
 
-                // Step 1: fetch /history to get the output filename
                 TSharedRef<IHttpRequest, ESPMode::ThreadSafe> HistoryRequest = FHttpModule::Get().CreateRequest();
                 HistoryRequest->SetURL(BaseUrl + TEXT("/history/") + PromptId);
                 HistoryRequest->SetVerb(TEXT("GET"));
@@ -1034,11 +1011,17 @@ void SComfyUIPanel::OnWorkflowComplete(bool bSuccess, const FString& PromptId, F
                                         const TArray<TSharedPtr<FJsonValue>>* Images;
                                         if ((*NodeOutput)->TryGetArrayField(TEXT("images"), Images) && Images->Num() > 0)
                                         {
-                                            FString Filename = (*Images)[0]->AsObject()->GetStringField(TEXT("filename"));
-                                            if (!Filename.Contains(TEXT("_temp_")))
+                                            // Fix #4: safe image object access
+                                            const TSharedPtr<FJsonObject>* ImageObj;
+                                            if ((*Images)[0]->TryGetObject(ImageObj) && ImageObj)
                                             {
-                                                OutputFilename = Filename;
-                                                break;
+                                                FString Filename;
+                                                if ((*ImageObj)->TryGetStringField(TEXT("filename"), Filename)
+                                                    && !Filename.Contains(TEXT("_temp_")))
+                                                {
+                                                    OutputFilename = Filename;
+                                                    break;
+                                                }
                                             }
                                         }
                                     }
@@ -1054,7 +1037,6 @@ void SComfyUIPanel::OnWorkflowComplete(bool bSuccess, const FString& PromptId, F
 
                         UE_LOG(LogTemp, Warning, TEXT("ComfyUI: Output filename: %s"), *OutputFilename);
 
-                        // Step 2: download the image via /view
                         Panel->UpdateStatus(TEXT("Downloading result..."));
                         Panel->DownloadImageFromComfyUI(OutputFilename,
                             [CapturedWeakThis, Params](bool bDownloadSuccess, const FString& LocalPath)
@@ -1082,17 +1064,13 @@ void SComfyUIPanel::OnWorkflowComplete(bool bSuccess, const FString& PromptId, F
 
                                 if (Params.bConvertToHDRI)
                                 {
-                                    // Convert downloaded panorama to .hdr
                                     FString HdrPath = Panel->ConvertImageToHDR(LocalPath);
                                     if (!HdrPath.IsEmpty())
                                     {
-                                        // Import as HDR texture
                                         UTextureCube* HdrTexture = Panel->ImportHDRToProject(
                                             HdrPath, Params.OutputPrefix);
                                         if (HdrTexture)
-                                        {
                                             Panel->ApplyTextureToHDRIBackdrop(HdrTexture);
-                                        }
                                     }
                                 }
                                 else if (Params.bAutoImport)
@@ -1130,29 +1108,32 @@ void SComfyUIPanel::StartGeneration()
         GenW, GenH, FinalW, FinalH, (int32)UpscaleMode);
 
     FComfyWorkflowParams WorkflowParams;
-    WorkflowParams.OutputPrefix = CurrentFilenamePrefix;
-    WorkflowParams.RunningStatus = TEXT("Generating image...");
-    WorkflowParams.CompleteStatus = TEXT("Done! Import to project or run Img2Img.");
-    WorkflowParams.bUpdatePreview = true;
-    WorkflowParams.bAutoImport = false;
+    WorkflowParams.OutputPrefix    = CurrentFilenamePrefix;
+    WorkflowParams.RunningStatus   = TEXT("Generating image...");
+    WorkflowParams.CompleteStatus  = TEXT("Done! Import to project or run Img2Img.");
+    WorkflowParams.bUpdatePreview  = true;
+    WorkflowParams.bAutoImport     = false;
     WorkflowParams.bTargetPreviewB = false;
 
     const int32 Seed = FMath::Abs((int32)(FDateTime::Now().GetTicks() % MAX_int32));
 
+    // Shared safe node patcher — uses TryGetObjectField at both levels
+    auto TryPatchNode = [](TSharedPtr<FJsonObject>& Workflow,
+                           const FString& NodeId,
+                           TFunction<void(TSharedPtr<FJsonObject>)> Fn) -> bool
+    {
+        const TSharedPtr<FJsonObject>* NodePtr = nullptr;
+        if (!Workflow->TryGetObjectField(NodeId, NodePtr) || !NodePtr || !NodePtr->IsValid())
+            return false;
+        const TSharedPtr<FJsonObject>* InputsPtr = nullptr;
+        if (!(*NodePtr)->TryGetObjectField(TEXT("inputs"), InputsPtr) || !InputsPtr || !InputsPtr->IsValid())
+            return false;
+        Fn(*InputsPtr);
+        return true;
+    };
+
     // =========================================================================
     // QWEN  (qwen_Image_2512_API.json)
-    // =========================================================================
-    // Node map:
-    //   248  EmptySD3LatentImage  — width, height
-    //   249  CLIPTextEncode       — positive prompt text
-    //   250  CLIPTextEncode       — negative prompt text
-    //   252  PrimitiveFloat       — CFG value
-    //   260  ModelSamplingAuraFlow — shift
-    //   261  KSampler             — seed, steps, sampler_name, scheduler
-    //   262  VAEDecode
-    //   263  UpscaleModelLoader   — model_name
-    //   264  ImageUpscaleWithModel — image from 262, upscale_model from 263
-    //   268  SaveImage            — images from 264 (or 262 when no upscale)
     // =========================================================================
     if (SelectedModelFamily == EComfyUIModelFamily::Qwen)
     {
@@ -1163,70 +1144,48 @@ void SComfyUIPanel::StartGeneration()
             return;
         }
 
-        // Latent resolution
-        if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("248")))
-        {
-            N->GetObjectField(TEXT("inputs"))->SetNumberField(TEXT("width"), GenW);
-            N->GetObjectField(TEXT("inputs"))->SetNumberField(TEXT("height"), GenH);
-        }
+        TryPatchNode(WorkflowObj, TEXT("248"), [&](TSharedPtr<FJsonObject> In) {
+            In->SetNumberField(TEXT("width"),  GenW);
+            In->SetNumberField(TEXT("height"), GenH);
+        });
+        TryPatchNode(WorkflowObj, TEXT("249"), [&](TSharedPtr<FJsonObject> In) {
+            In->SetStringField(TEXT("text"), PromptText);
+        });
+        TryPatchNode(WorkflowObj, TEXT("252"), [&](TSharedPtr<FJsonObject> In) {
+            In->SetNumberField(TEXT("value"), QwenSettings.CFGScale);
+        });
+        TryPatchNode(WorkflowObj, TEXT("260"), [&](TSharedPtr<FJsonObject> In) {
+            In->SetNumberField(TEXT("shift"), QwenSettings.Shift);
+        });
+        TryPatchNode(WorkflowObj, TEXT("261"), [&](TSharedPtr<FJsonObject> In) {
+            In->SetNumberField(TEXT("seed"),         Seed);
+            In->SetNumberField(TEXT("steps"),        QwenSettings.Steps);
+            In->SetStringField(TEXT("sampler_name"), QwenSettings.Sampler);
+            In->SetStringField(TEXT("scheduler"),    QwenSettings.Scheduler);
+        });
 
-        // Positive prompt
-        if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("249")))
-            N->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("text"), PromptText);
-
-        // CFG
-        if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("252")))
-            N->GetObjectField(TEXT("inputs"))->SetNumberField(TEXT("value"), QwenSettings.CFGScale);
-
-        // Shift
-        if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("260")))
-            N->GetObjectField(TEXT("inputs"))->SetNumberField(TEXT("shift"), QwenSettings.Shift);
-
-        // KSampler
-        if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("261")))
-        {
-            auto Inputs = N->GetObjectField(TEXT("inputs"));
-            Inputs->SetNumberField(TEXT("seed"), Seed);
-            Inputs->SetNumberField(TEXT("steps"), QwenSettings.Steps);
-            Inputs->SetStringField(TEXT("sampler_name"), QwenSettings.Sampler);
-            Inputs->SetStringField(TEXT("scheduler"), QwenSettings.Scheduler);
-        }
-
-        // Filename prefix + upscale routing
         if (UpscaleMode == EUpscaleMode::None)
         {
-            // Disable the upscale nodes and wire SaveImage directly to VAEDecode
             DisableNode(WorkflowObj, TEXT("263"));
             DisableNode(WorkflowObj, TEXT("264"));
             PatchSaveImageInput(WorkflowObj, TEXT("268"), TEXT("262"), 0);
         }
         else
         {
-            // Set the upscale model; 264 already wires 263→262→268
-            if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("263")))
-                N->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("model_name"),
-                    GetUpscalerModel(UpscaleMode));
+            TryPatchNode(WorkflowObj, TEXT("263"), [&](TSharedPtr<FJsonObject> In) {
+                In->SetStringField(TEXT("model_name"), GetUpscalerModel(UpscaleMode));
+            });
         }
 
-        if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("268")))
-            N->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("filename_prefix"),
-                CurrentFilenamePrefix);
+        TryPatchNode(WorkflowObj, TEXT("268"), [&](TSharedPtr<FJsonObject> In) {
+            In->SetStringField(TEXT("filename_prefix"), CurrentFilenamePrefix);
+        });
 
         WorkflowParams.WorkflowJson = SerializeWorkflow(WorkflowObj);
     }
 
     // =========================================================================
     // FLUX  (Flux_2_klein_API.json)
-    // =========================================================================
-    // Node map:
-    //   17  EmptyFlux2LatentImage — width, height
-    //   18  RandomNoise          — noise_seed
-    //   19  Flux2Scheduler       — steps, width, height
-    //   20  KSamplerSelect       — sampler_name
-    //   22  VAEDecode
-    //   24  UpscaleModelLoader   — model_name
-    //   25  ImageUpscaleWithModel — image from 22, upscale_model from 24
-    //   33  SaveImage            — images from 25 (or 22 when no upscale)
     // =========================================================================
     else
     {
@@ -1237,53 +1196,41 @@ void SComfyUIPanel::StartGeneration()
             return;
         }
 
-        // Latent resolution
-        if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("17")))
-        {
-            N->GetObjectField(TEXT("inputs"))->SetNumberField(TEXT("width"), GenW);
-            N->GetObjectField(TEXT("inputs"))->SetNumberField(TEXT("height"), GenH);
-        }
+        TryPatchNode(WorkflowObj, TEXT("17"), [&](TSharedPtr<FJsonObject> In) {
+            In->SetNumberField(TEXT("width"),  GenW);
+            In->SetNumberField(TEXT("height"), GenH);
+        });
+        TryPatchNode(WorkflowObj, TEXT("19"), [&](TSharedPtr<FJsonObject> In) {
+            In->SetNumberField(TEXT("width"),  GenW);
+            In->SetNumberField(TEXT("height"), GenH);
+            In->SetNumberField(TEXT("steps"),  FluxSettings.Steps);
+        });
+        TryPatchNode(WorkflowObj, TEXT("18"), [&](TSharedPtr<FJsonObject> In) {
+            In->SetNumberField(TEXT("noise_seed"), Seed);
+        });
+        TryPatchNode(WorkflowObj, TEXT("20"), [&](TSharedPtr<FJsonObject> In) {
+            In->SetStringField(TEXT("sampler_name"), FluxSettings.Sampler);
+        });
+        TryPatchNode(WorkflowObj, TEXT("14"), [&](TSharedPtr<FJsonObject> In) {
+            In->SetStringField(TEXT("text"), PromptText);
+        });
 
-        // Scheduler resolution + steps (Flux2Scheduler needs matching dims)
-        if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("19")))
-        {
-            N->GetObjectField(TEXT("inputs"))->SetNumberField(TEXT("width"), GenW);
-            N->GetObjectField(TEXT("inputs"))->SetNumberField(TEXT("height"), GenH);
-            N->GetObjectField(TEXT("inputs"))->SetNumberField(TEXT("steps"), FluxSettings.Steps);
-        }
-
-        // Seed
-        if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("18")))
-            N->GetObjectField(TEXT("inputs"))->SetNumberField(TEXT("noise_seed"), Seed);
-
-        // Sampler
-        if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("20")))
-            N->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("sampler_name"),
-                FluxSettings.Sampler);
-
-        // Positive prompt
-        if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("14")))
-            N->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("text"), PromptText);
-
-        // Filename prefix + upscale routing
         if (UpscaleMode == EUpscaleMode::None)
         {
-            // Disable the upscale nodes and wire SaveImage directly to VAEDecode
             DisableNode(WorkflowObj, TEXT("24"));
             DisableNode(WorkflowObj, TEXT("25"));
             PatchSaveImageInput(WorkflowObj, TEXT("33"), TEXT("22"), 0);
         }
         else
         {
-            // Set the upscale model; 25 already wires 24→22→33
-            if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("24")))
-                N->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("model_name"),
-                    GetUpscalerModel(UpscaleMode));
+            TryPatchNode(WorkflowObj, TEXT("24"), [&](TSharedPtr<FJsonObject> In) {
+                In->SetStringField(TEXT("model_name"), GetUpscalerModel(UpscaleMode));
+            });
         }
 
-        if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("33")))
-            N->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("filename_prefix"),
-                CurrentFilenamePrefix);
+        TryPatchNode(WorkflowObj, TEXT("33"), [&](TSharedPtr<FJsonObject> In) {
+            In->SetStringField(TEXT("filename_prefix"), CurrentFilenamePrefix);
+        });
 
         WorkflowParams.WorkflowJson = SerializeWorkflow(WorkflowObj);
     }
@@ -1299,18 +1246,31 @@ void SComfyUIPanel::StartImg2Img()
     const EUpscaleMode UpscaleMode = Img2ImgUpscaleMode;
 
     FComfyWorkflowParams WorkflowParams;
-    WorkflowParams.OutputPrefix = TEXT("Edit");
-    WorkflowParams.RunningStatus = TEXT("Running img2img...");
-    WorkflowParams.CompleteStatus = TEXT("Edit complete!");
-    WorkflowParams.bUpdatePreview = true;
-    WorkflowParams.bAutoImport = false;
+    WorkflowParams.OutputPrefix    = TEXT("Edit");
+    WorkflowParams.RunningStatus   = TEXT("Running img2img...");
+    WorkflowParams.CompleteStatus  = TEXT("Edit complete!");
+    WorkflowParams.bUpdatePreview  = true;
+    WorkflowParams.bAutoImport     = false;
     WorkflowParams.bTargetPreviewB = true;
 
-    FString Filename = FPaths::GetCleanFilename(PreviewImagePathA);
-    bool bIsOutput = PreviewImagePathA.StartsWith(GetLocalTempFolder());
-    FString ImageValue = bIsOutput ? Filename + TEXT(" [output]") : Filename;
+    FString Filename    = FPaths::GetCleanFilename(PreviewImagePathA);
+    bool bIsOutput      = PreviewImagePathA.StartsWith(GetLocalTempFolder());
+    FString ImageValue  = bIsOutput ? Filename + TEXT(" [output]") : Filename;
+    int32 Seed          = FMath::Abs((int32)(FDateTime::Now().GetTicks() % MAX_int32));
 
-    int32 Seed = FMath::Abs((int32)(FDateTime::Now().GetTicks() % MAX_int32));
+    auto TryPatchNode = [](TSharedPtr<FJsonObject>& Workflow,
+                           const FString& NodeId,
+                           TFunction<void(TSharedPtr<FJsonObject>)> Fn) -> bool
+    {
+        const TSharedPtr<FJsonObject>* NodePtr = nullptr;
+        if (!Workflow->TryGetObjectField(NodeId, NodePtr) || !NodePtr || !NodePtr->IsValid())
+            return false;
+        const TSharedPtr<FJsonObject>* InputsPtr = nullptr;
+        if (!(*NodePtr)->TryGetObjectField(TEXT("inputs"), InputsPtr) || !InputsPtr || !InputsPtr->IsValid())
+            return false;
+        Fn(*InputsPtr);
+        return true;
+    };
 
     if (SelectedModelFamily == EComfyUIModelFamily::Qwen)
     {
@@ -1321,48 +1281,45 @@ void SComfyUIPanel::StartImg2Img()
             return;
         }
 
-        // Fix model name
-        if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("174")))
-            N->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("unet_name"),
-                TEXT("qwen_image_edit_2511_fp8mixed.safetensors"));
-
-        // Patch image
-        if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("41")))
-            N->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("image"), ImageValue);
-
-        // Patch prompt
-        if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("175")))
-            N->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("prompt"), Img2ImgPromptText);
-
-        // Patch seed
-        if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("183")))
-            N->GetObjectField(TEXT("inputs"))->SetNumberField(TEXT("seed"), Seed);
-
-        // Patch sampler settings
-        if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("183")))
-        {
-            N->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("sampler_name"), QwenSettings.Sampler);
-            N->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("scheduler"), QwenSettings.Scheduler);
-        }
-        if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("181")))
-            N->GetObjectField(TEXT("inputs"))->SetNumberField(TEXT("value"), QwenSettings.Steps);
-        if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("182")))
-            N->GetObjectField(TEXT("inputs"))->SetNumberField(TEXT("value"), QwenSettings.CFGScale);
+        TryPatchNode(WorkflowObj, TEXT("174"), [&](TSharedPtr<FJsonObject> In) {
+            In->SetStringField(TEXT("unet_name"), TEXT("qwen_image_edit_2511_fp8mixed.safetensors"));
+        });
+        TryPatchNode(WorkflowObj, TEXT("41"), [&](TSharedPtr<FJsonObject> In) {
+            In->SetStringField(TEXT("image"), ImageValue);
+        });
+        TryPatchNode(WorkflowObj, TEXT("175"), [&](TSharedPtr<FJsonObject> In) {
+            In->SetStringField(TEXT("prompt"), Img2ImgPromptText);
+        });
+        TryPatchNode(WorkflowObj, TEXT("183"), [&](TSharedPtr<FJsonObject> In) {
+            In->SetNumberField(TEXT("seed"),         Seed);
+            In->SetStringField(TEXT("sampler_name"), QwenSettings.Sampler);
+            In->SetStringField(TEXT("scheduler"),    QwenSettings.Scheduler);
+        });
+        TryPatchNode(WorkflowObj, TEXT("181"), [&](TSharedPtr<FJsonObject> In) {
+            In->SetNumberField(TEXT("value"), QwenSettings.Steps);
+        });
+        TryPatchNode(WorkflowObj, TEXT("182"), [&](TSharedPtr<FJsonObject> In) {
+            In->SetNumberField(TEXT("value"), QwenSettings.CFGScale);
+        });
 
         // Fix missing VAE on node 186
-        if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("186")))
+        const TSharedPtr<FJsonObject>* Node186 = nullptr;
+        if (WorkflowObj->TryGetObjectField(TEXT("186"), Node186) && Node186 && Node186->IsValid())
         {
-            TArray<TSharedPtr<FJsonValue>> VaeRef;
-            VaeRef.Add(MakeShared<FJsonValueString>(TEXT("172")));
-            VaeRef.Add(MakeShared<FJsonValueNumber>(0));
-            N->GetObjectField(TEXT("inputs"))->SetArrayField(TEXT("vae"), VaeRef);
+            const TSharedPtr<FJsonObject>* Inputs186 = nullptr;
+            if ((*Node186)->TryGetObjectField(TEXT("inputs"), Inputs186) && Inputs186 && Inputs186->IsValid())
+            {
+                TArray<TSharedPtr<FJsonValue>> VaeRef;
+                VaeRef.Add(MakeShared<FJsonValueString>(TEXT("172")));
+                VaeRef.Add(MakeShared<FJsonValueNumber>(0));
+                (*Inputs186)->SetArrayField(TEXT("vae"), VaeRef);
+            }
         }
 
-        // Patch filename
-        if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("9")))
-            N->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("filename_prefix"), TEXT("Edit"));
+        TryPatchNode(WorkflowObj, TEXT("9"), [&](TSharedPtr<FJsonObject> In) {
+            In->SetStringField(TEXT("filename_prefix"), TEXT("Edit"));
+        });
 
-        // Handle upscaler
         if (UpscaleMode == EUpscaleMode::None)
         {
             DisableNode(WorkflowObj, TEXT("187"));
@@ -1371,8 +1328,9 @@ void SComfyUIPanel::StartImg2Img()
         }
         else
         {
-            if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("187")))
-                N->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("model_name"), GetUpscalerModel(UpscaleMode));
+            TryPatchNode(WorkflowObj, TEXT("187"), [&](TSharedPtr<FJsonObject> In) {
+                In->SetStringField(TEXT("model_name"), GetUpscalerModel(UpscaleMode));
+            });
         }
 
         WorkflowParams.WorkflowJson = SerializeWorkflow(WorkflowObj);
@@ -1386,23 +1344,19 @@ void SComfyUIPanel::StartImg2Img()
             return;
         }
 
-        // Patch image
-        if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("32")))
-            N->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("image"), ImageValue);
+        TryPatchNode(WorkflowObj, TEXT("32"), [&](TSharedPtr<FJsonObject> In) {
+            In->SetStringField(TEXT("image"), ImageValue);
+        });
+        TryPatchNode(WorkflowObj, TEXT("2"), [&](TSharedPtr<FJsonObject> In) {
+            In->SetStringField(TEXT("text"), Img2ImgPromptText);
+        });
+        TryPatchNode(WorkflowObj, TEXT("16"), [&](TSharedPtr<FJsonObject> In) {
+            In->SetNumberField(TEXT("seed"), Seed);
+        });
+        TryPatchNode(WorkflowObj, TEXT("3"), [&](TSharedPtr<FJsonObject> In) {
+            In->SetStringField(TEXT("filename_prefix"), TEXT("Edit"));
+        });
 
-        // Patch prompt
-        if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("2")))
-            N->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("text"), Img2ImgPromptText);
-
-        // Patch seed
-        if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("16")))
-            N->GetObjectField(TEXT("inputs"))->SetNumberField(TEXT("seed"), Seed);
-
-        // Patch filename
-        if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("3")))
-            N->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("filename_prefix"), TEXT("Edit"));
-
-        // Handle upscaler
         if (UpscaleMode == EUpscaleMode::None)
         {
             DisableNode(WorkflowObj, TEXT("18"));
@@ -1411,8 +1365,9 @@ void SComfyUIPanel::StartImg2Img()
         }
         else
         {
-            if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("18")))
-                N->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("model_name"), GetUpscalerModel(UpscaleMode));
+            TryPatchNode(WorkflowObj, TEXT("18"), [&](TSharedPtr<FJsonObject> In) {
+                In->SetStringField(TEXT("model_name"), GetUpscalerModel(UpscaleMode));
+            });
         }
 
         WorkflowParams.WorkflowJson = SerializeWorkflow(WorkflowObj);
@@ -1430,29 +1385,45 @@ void SComfyUIPanel::Start360Generation(const FString& SourcePath)
         return;
     }
 
-    FString Filename = FPaths::GetCleanFilename(SourcePath);
-    bool bIsOutput = SourcePath.StartsWith(GetLocalTempFolder());
+    FString Filename   = FPaths::GetCleanFilename(SourcePath);
+    bool bIsOutput     = SourcePath.StartsWith(GetLocalTempFolder());
     FString ImageValue = bIsOutput ? Filename + TEXT(" [output]") : Filename;
+    int32 Seed         = FMath::Abs((int32)(FDateTime::Now().GetTicks() % MAX_int32));
 
-    if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("41")))
-        N->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("image"), ImageValue);
+    auto TryPatchNode = [](TSharedPtr<FJsonObject>& Workflow,
+                           const FString& NodeId,
+                           TFunction<void(TSharedPtr<FJsonObject>)> Fn) -> bool
+    {
+        const TSharedPtr<FJsonObject>* NodePtr = nullptr;
+        if (!Workflow->TryGetObjectField(NodeId, NodePtr) || !NodePtr || !NodePtr->IsValid())
+            return false;
+        const TSharedPtr<FJsonObject>* InputsPtr = nullptr;
+        if (!(*NodePtr)->TryGetObjectField(TEXT("inputs"), InputsPtr) || !InputsPtr || !InputsPtr->IsValid())
+            return false;
+        Fn(*InputsPtr);
+        return true;
+    };
 
-    int32 Seed = FMath::Abs((int32)(FDateTime::Now().GetTicks() % MAX_int32));
-    if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("183")))
-        N->GetObjectField(TEXT("inputs"))->SetNumberField(TEXT("seed"), Seed);
-    if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("214")))
-        N->GetObjectField(TEXT("inputs"))->SetNumberField(TEXT("seed"), Seed + 1);
-
-    if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("217")))
-        N->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("filename_prefix"), TEXT("360"));
+    TryPatchNode(WorkflowObj, TEXT("41"), [&](TSharedPtr<FJsonObject> In) {
+        In->SetStringField(TEXT("image"), ImageValue);
+    });
+    TryPatchNode(WorkflowObj, TEXT("183"), [&](TSharedPtr<FJsonObject> In) {
+        In->SetNumberField(TEXT("seed"), Seed);
+    });
+    TryPatchNode(WorkflowObj, TEXT("214"), [&](TSharedPtr<FJsonObject> In) {
+        In->SetNumberField(TEXT("seed"), Seed + 1);
+    });
+    TryPatchNode(WorkflowObj, TEXT("217"), [&](TSharedPtr<FJsonObject> In) {
+        In->SetStringField(TEXT("filename_prefix"), TEXT("360"));
+    });
 
     FComfyWorkflowParams WorkflowParams;
-    WorkflowParams.WorkflowJson = SerializeWorkflow(WorkflowObj);
-    WorkflowParams.OutputPrefix = TEXT("360_Qwen");
-    WorkflowParams.RunningStatus = TEXT("Generating 360\u00b0 panorama...");
+    WorkflowParams.WorkflowJson   = SerializeWorkflow(WorkflowObj);
+    WorkflowParams.OutputPrefix   = TEXT("360_Qwen");
+    WorkflowParams.RunningStatus  = TEXT("Generating 360\u00b0 panorama...");
     WorkflowParams.CompleteStatus = TEXT("360\u00b0 HDRI generated!");
     WorkflowParams.bUpdatePreview = false;
-    WorkflowParams.bAutoImport = false;
+    WorkflowParams.bAutoImport    = false;
     WorkflowParams.bConvertToHDRI = true;
 
     SubmitWorkflow(WorkflowParams);
@@ -1490,11 +1461,9 @@ FReply SComfyUIPanel::OnImg2ImgBrowseClicked()
         FString SelectedFile = OutFiles[0];
         UpdateStatus(TEXT("Uploading image to ComfyUI..."));
 
-        // Display immediately from local path for instant feedback
         PreviewImagePathA = SelectedFile;
         LoadAndDisplayImage(SelectedFile, false);
 
-        // Upload to ComfyUI in background — StartImg2Img will use the filename
         UploadImageToComfyUI(SelectedFile,
             [this](bool bSuccess, const FString& Filename)
             {
@@ -1528,7 +1497,6 @@ FReply SComfyUIPanel::OnGenerate360Clicked(FString SourcePath)
         return FReply::Handled();
     }
 
-    // If source is a browsed (non-downloaded) image, upload it first
     bool bIsDownloadedOutput = SourcePath.StartsWith(GetLocalTempFolder());
     if (!bIsDownloadedOutput)
     {
@@ -1591,7 +1559,7 @@ FReply SComfyUIPanel::OnApplyToComposureClicked(FString SourcePath)
             return FReply::Handled();
         }
         LastImportedImagePath = SourcePath;
-        LastImportedTexture = TextureToApply;
+        LastImportedTexture   = TextureToApply;
     }
 
     ApplyTextureToComposurePlates(TextureToApply);
@@ -1600,10 +1568,8 @@ FReply SComfyUIPanel::OnApplyToComposureClicked(FString SourcePath)
 
 void SComfyUIPanel::OnResolutionChanged(TSharedPtr<FResolutionOption> NewSelection, ESelectInfo::Type)
 {
-    if (NewSelection.IsValid()) 
-    {
+    if (NewSelection.IsValid())
         SelectedResolution = NewSelection;
-    }
 }
 
 // ============================================================================
@@ -1636,7 +1602,6 @@ void SComfyUIPanel::ImportImageToProject(const FString& ImagePath, const FString
 
 FString SComfyUIPanel::ConvertImageToHDR(const FString& SourceImagePath)
 {
-    // Load image bytes
     TArray<uint8> RawFileData;
     if (!FFileHelper::LoadFileToArray(RawFileData, *SourceImagePath))
     {
@@ -1644,7 +1609,6 @@ FString SComfyUIPanel::ConvertImageToHDR(const FString& SourceImagePath)
         return FString();
     }
 
-    // Decode via ImageWrapper
     IImageWrapperModule& ImageWrapperModule = FModuleManager::LoadModuleChecked<IImageWrapperModule>(TEXT("ImageWrapper"));
 
     EImageFormat DetectedFormat = EImageFormat::PNG;
@@ -1665,42 +1629,32 @@ FString SComfyUIPanel::ConvertImageToHDR(const FString& SourceImagePath)
         return FString();
     }
 
-    const int32 Width = ImageWrapper->GetWidth();
-    const int32 Height = ImageWrapper->GetHeight();
+    const int32 Width     = ImageWrapper->GetWidth();
+    const int32 Height    = ImageWrapper->GetHeight();
     const int32 NumPixels = Width * Height;
 
-    // Convert to float HDR with highlight boost
-    // - Gamma decode (2.2) to linearize
-    // - Boost highlights based on luminance to simulate HDR headroom
     TArray<FLinearColor> HDRPixels;
     HDRPixels.SetNum(NumPixels);
 
     for (int32 i = 0; i < NumPixels; i++)
     {
-        // BGRA byte order
         const int32 Idx = i * 4;
         float B = RawRGBA[Idx + 0] / 255.0f;
         float G = RawRGBA[Idx + 1] / 255.0f;
         float R = RawRGBA[Idx + 2] / 255.0f;
 
-        // Gamma decode to linear
         R = FMath::Pow(R, 2.2f);
         G = FMath::Pow(G, 2.2f);
         B = FMath::Pow(B, 2.2f);
 
-        // Luminance-based highlight boost
-        // Bright areas (sky, light sources) get pushed significantly higher
-        // to give the HDRI Backdrop meaningful light intensity variation
         float Luminance = 0.2126f * R + 0.7152f * G + 0.0722f * B;
-        float Boost = 1.0f + FMath::Pow(FMath::Clamp(Luminance, 0.0f, 1.0f), 2.0f) * 8.0f;
+        float Boost     = 1.0f + FMath::Pow(FMath::Clamp(Luminance, 0.0f, 1.0f), 2.0f) * 8.0f;
 
         HDRPixels[i] = FLinearColor(R * Boost, G * Boost, B * Boost, 1.0f);
     }
 
-    
-    // Write as 32-bit float EXR — UE imports this perfectly as HDR, no dialog
     FString Timestamp = FDateTime::Now().ToString(TEXT("%Y%m%d_%H%M%S"));
-    FString HdrPath = FPaths::Combine(
+    FString HdrPath   = FPaths::Combine(
         FPaths::GetPath(SourceImagePath),
         FPaths::GetBaseFilename(SourceImagePath) + TEXT("_") + Timestamp + TEXT(".exr")
     );
@@ -1712,7 +1666,6 @@ FString SComfyUIPanel::ConvertImageToHDR(const FString& SourceImagePath)
         return FString();
     }
 
-    // Pack HDRPixels into raw RGBA float array
     TArray<uint8> FloatData;
     FloatData.SetNumUninitialized(NumPixels * 4 * sizeof(float));
     float* FloatPtr = reinterpret_cast<float*>(FloatData.GetData());
@@ -1744,7 +1697,6 @@ FString SComfyUIPanel::ConvertImageToHDR(const FString& SourceImagePath)
     return HdrPath;
 }
 
-
 UTextureCube* SComfyUIPanel::ImportHDRToProject(const FString& HdrFilePath, const FString& AssetName)
 {
 #if WITH_EDITOR
@@ -1752,7 +1704,7 @@ UTextureCube* SComfyUIPanel::ImportHDRToProject(const FString& HdrFilePath, cons
     FString AssetPath = UComfyUIBlueprintLibrary::GenerateUniqueAssetName(
         TEXT("/Game/GeneratedTextures/HDRI"), AssetName + TEXT("_") + Timestamp);
 
-    FString PackageName = FPackageName::ObjectPathToPackageName(AssetPath);
+    FString PackageName  = FPackageName::ObjectPathToPackageName(AssetPath);
     FString AssetNameClean = FPackageName::GetLongPackageAssetName(PackageName);
 
     UPackage* Package = CreatePackage(*PackageName);
@@ -1762,7 +1714,6 @@ UTextureCube* SComfyUIPanel::ImportHDRToProject(const FString& HdrFilePath, cons
         return nullptr;
     }
 
-    // Read the EXR file
     TArray<uint8> HdrData;
     if (!FFileHelper::LoadFileToArray(HdrData, *HdrFilePath))
     {
@@ -1770,7 +1721,6 @@ UTextureCube* SComfyUIPanel::ImportHDRToProject(const FString& HdrFilePath, cons
         return nullptr;
     }
 
-    // Decode EXR to raw float pixels
     IImageWrapperModule& ImageWrapperModule = FModuleManager::LoadModuleChecked<IImageWrapperModule>(TEXT("ImageWrapper"));
     TSharedPtr<IImageWrapper> ExrWrapper = ImageWrapperModule.CreateImageWrapper(EImageFormat::EXR);
     if (!ExrWrapper.IsValid() || !ExrWrapper->SetCompressed(HdrData.GetData(), HdrData.Num()))
@@ -1789,7 +1739,6 @@ UTextureCube* SComfyUIPanel::ImportHDRToProject(const FString& HdrFilePath, cons
     const int32 W = ExrWrapper->GetWidth();
     const int32 H = ExrWrapper->GetHeight();
 
-    // Create UTextureCube asset
     UTextureCube* Texture = NewObject<UTextureCube>(Package, *AssetNameClean, RF_Public | RF_Standalone);
     if (!Texture)
     {
@@ -1797,12 +1746,11 @@ UTextureCube* SComfyUIPanel::ImportHDRToProject(const FString& HdrFilePath, cons
         return nullptr;
     }
 
-    // Initialize source as equirectangular longlat — UE will treat it as a cubemap
     Texture->Source.Init(W, H, 1, 1, TSF_RGBA32F, RawData.GetData());
     Texture->CompressionSettings = TC_HDR;
-    Texture->SRGB = false;
-    Texture->MipGenSettings = TMGS_NoMipmaps;
-    Texture->LODGroup = TEXTUREGROUP_Skybox;
+    Texture->SRGB                = false;
+    Texture->MipGenSettings      = TMGS_NoMipmaps;
+    Texture->LODGroup            = TEXTUREGROUP_Skybox;
 
     Texture->UpdateResource();
     Texture->PostEditChange();
@@ -1832,9 +1780,7 @@ void SComfyUIPanel::ApplyTextureToHDRIBackdrop(UTextureCube* Texture)
     {
         AActor* Actor = *It;
         if (!Actor) continue;
-
-        if (!Actor->GetClass()->GetName().Contains(TEXT("HDRIBackdrop")))
-            continue;
+        if (!Actor->GetClass()->GetName().Contains(TEXT("HDRIBackdrop"))) continue;
 
         UE_LOG(LogTemp, Warning, TEXT("ComfyUI HDR: Found HDRIBackdrop actor: %s"), *Actor->GetName());
 
@@ -1852,20 +1798,17 @@ void SComfyUIPanel::ApplyTextureToHDRIBackdrop(UTextureCube* Texture)
             continue;
         }
 
-        ObjProp->SetObjectPropertyValue(
-            CubemapProp->ContainerPtrToValuePtr<void>(Actor), Texture);
+        ObjProp->SetObjectPropertyValue(CubemapProp->ContainerPtrToValuePtr<void>(Actor), Texture);
 
         FPropertyChangedEvent PropEvent(CubemapProp);
         Actor->PostEditChangeProperty(PropEvent);
         Actor->Modify();
         BackdropsUpdated++;
 
-        UE_LOG(LogTemp, Warning, TEXT("ComfyUI HDR: Applied cubemap to HDRIBackdrop: %s"),
-            *Actor->GetName());
+        UE_LOG(LogTemp, Warning, TEXT("ComfyUI HDR: Applied cubemap to HDRIBackdrop: %s"), *Actor->GetName());
     }
 
-    if (GEditor)
-        GEditor->RedrawAllViewports();
+    if (GEditor) GEditor->RedrawAllViewports();
 
     if (BackdropsUpdated > 0)
         UpdateStatus(FString::Printf(TEXT("Applied HDRI to %d backdrop(s)"), BackdropsUpdated));
@@ -1890,7 +1833,7 @@ void SComfyUIPanel::ApplyTextureToComposurePlates(UTexture2D* Texture)
     {
         if (Actor->GetClass()->GetName() != TEXT("CompositeActor")) continue;
 
-        UClass* ActorClass = Actor->GetClass();
+        UClass* ActorClass    = Actor->GetClass();
         FProperty* LayersProp = ActorClass->FindPropertyByName(TEXT("CompositeLayers"));
         FArrayProperty* ArrayProp = CastField<FArrayProperty>(LayersProp);
         if (!ArrayProp) continue;
@@ -1901,8 +1844,8 @@ void SComfyUIPanel::ApplyTextureToComposurePlates(UTexture2D* Texture)
             UObject* LayerObj = *reinterpret_cast<UObject**>(ArrayHelper.GetRawPtr(i));
             if (!LayerObj || !LayerObj->GetClass()->GetName().Contains(TEXT("Plate"))) continue;
 
-            FProperty* TextureProp = LayerObj->GetClass()->FindPropertyByName(TEXT("Texture"));
-            FObjectProperty* ObjProp = CastField<FObjectProperty>(TextureProp);
+            FProperty* TextureProp    = LayerObj->GetClass()->FindPropertyByName(TEXT("Texture"));
+            FObjectProperty* ObjProp  = CastField<FObjectProperty>(TextureProp);
             if (!ObjProp) continue;
 
             ObjProp->SetObjectPropertyValue(TextureProp->ContainerPtrToValuePtr<void>(LayerObj), Texture);
@@ -1950,7 +1893,6 @@ void SComfyUIPanel::PollComfyConnection()
             bIsComfyReady = false;
             StatusText = TEXT("ComfyUI Offline");
 
-            // Retry every 5 seconds
             if (GEditor)
             {
                 GEditor->GetTimerManager()->SetTimer(
@@ -1978,11 +1920,10 @@ void SComfyUIPanel::UploadImageToComfyUI(const FString& LocalFilePath, TFunction
     }
 
     const UComfyUISettings* Settings = GetDefault<UComfyUISettings>();
-    FString BaseUrl = Settings ? Settings->BaseUrl : TEXT("http://127.0.0.1:8188");
+    FString BaseUrl  = Settings ? Settings->BaseUrl : TEXT("http://127.0.0.1:8188");
     FString Filename = FPaths::GetCleanFilename(LocalFilePath);
 
-    // Build multipart/form-data body
-    FString Boundary = TEXT("----ComfyUIBoundary");
+    FString Boundary    = TEXT("----ComfyUIBoundary");
     FString ContentType = FString::Printf(TEXT("multipart/form-data; boundary=%s"), *Boundary);
 
     TArray<uint8> Body;
@@ -2014,7 +1955,6 @@ void SComfyUIPanel::UploadImageToComfyUI(const FString& LocalFilePath, TFunction
                 return;
             }
 
-            // Response contains the filename ComfyUI stored it as
             TSharedPtr<FJsonObject> JsonResponse;
             const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Response->GetContentAsString());
             FString StoredFilename = Filename;
@@ -2036,8 +1976,7 @@ void SComfyUIPanel::DownloadImageFromComfyUI(const FString& Filename, TFunction<
 {
     const UComfyUISettings* Settings = GetDefault<UComfyUISettings>();
     FString BaseUrl = Settings ? Settings->BaseUrl : TEXT("http://127.0.0.1:8188");
-
-    FString Url = BaseUrl + TEXT("/view?filename=") + Filename + TEXT("&type=output");
+    FString Url     = BaseUrl + TEXT("/view?filename=") + Filename + TEXT("&type=output");
 
     TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
     Request->SetURL(Url);
@@ -2053,7 +1992,6 @@ void SComfyUIPanel::DownloadImageFromComfyUI(const FString& Filename, TFunction<
                 return;
             }
 
-            // Save to local temp folder
             FString TempFolder = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("ComfyUITemp"));
             IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
             if (!PlatformFile.DirectoryExists(*TempFolder))
@@ -2091,28 +2029,32 @@ FString SComfyUIPanel::GetUpscalerModel(EUpscaleMode Mode) const
     {
     case EUpscaleMode::TwoX:  return TEXT("RealESRGAN_x2plus.pth");
     case EUpscaleMode::FourX: return TEXT("4x-ESRGAN.pth");
-    default: return TEXT("");
+    default:                  return TEXT("");
     }
 }
 
 void SComfyUIPanel::DisableNode(TSharedPtr<FJsonObject>& WorkflowObj, const FString& NodeId) const
 {
-    if (TSharedPtr<FJsonObject> Node = WorkflowObj->GetObjectField(NodeId))
-        Node->SetNumberField(TEXT("mode"), 4);
+    const TSharedPtr<FJsonObject>* NodePtr = nullptr;
+    if (WorkflowObj->TryGetObjectField(NodeId, NodePtr) && NodePtr && NodePtr->IsValid())
+        (*NodePtr)->SetNumberField(TEXT("mode"), 4);
 }
 
 void SComfyUIPanel::PatchSaveImageInput(TSharedPtr<FJsonObject>& WorkflowObj,
-    const FString& SaveNodeId,
-    const FString& SourceNodeId,
-    int32 SourceSlot) const
+    const FString& SaveNodeId, const FString& SourceNodeId, int32 SourceSlot) const
 {
-    if (TSharedPtr<FJsonObject> SaveNode = WorkflowObj->GetObjectField(SaveNodeId))
-    {
-        TArray<TSharedPtr<FJsonValue>> ImagesRef;
-        ImagesRef.Add(MakeShared<FJsonValueString>(SourceNodeId));
-        ImagesRef.Add(MakeShared<FJsonValueNumber>(SourceSlot));
-        SaveNode->GetObjectField(TEXT("inputs"))->SetArrayField(TEXT("images"), ImagesRef);
-    }
+    const TSharedPtr<FJsonObject>* NodePtr = nullptr;
+    if (!WorkflowObj->TryGetObjectField(SaveNodeId, NodePtr) || !NodePtr || !NodePtr->IsValid())
+        return;
+
+    const TSharedPtr<FJsonObject>* InputsPtr = nullptr;
+    if (!(*NodePtr)->TryGetObjectField(TEXT("inputs"), InputsPtr) || !InputsPtr || !InputsPtr->IsValid())
+        return;
+
+    TArray<TSharedPtr<FJsonValue>> ImagesRef;
+    ImagesRef.Add(MakeShared<FJsonValueString>(SourceNodeId));
+    ImagesRef.Add(MakeShared<FJsonValueNumber>(SourceSlot));
+    (*InputsPtr)->SetArrayField(TEXT("images"), ImagesRef);
 }
 
 void SComfyUIPanel::PatchUpscaler(TSharedPtr<FJsonObject>& WorkflowObj,
@@ -2131,11 +2073,15 @@ void SComfyUIPanel::PatchUpscaler(TSharedPtr<FJsonObject>& WorkflowObj,
     }
     else
     {
-        if (TSharedPtr<FJsonObject> LoaderNode = WorkflowObj->GetObjectField(UpscaleLoaderNodeId))
-            LoaderNode->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("model_name"), GetUpscalerModel(Mode));
+        const TSharedPtr<FJsonObject>* NodePtr = nullptr;
+        if (WorkflowObj->TryGetObjectField(UpscaleLoaderNodeId, NodePtr) && NodePtr && NodePtr->IsValid())
+        {
+            const TSharedPtr<FJsonObject>* InputsPtr = nullptr;
+            if ((*NodePtr)->TryGetObjectField(TEXT("inputs"), InputsPtr) && InputsPtr && InputsPtr->IsValid())
+                (*InputsPtr)->SetStringField(TEXT("model_name"), GetUpscalerModel(Mode));
+        }
     }
 }
-
 
 void SComfyUIPanel::StartHistoryPoller(const FString& PromptId, const FComfyWorkflowParams& Params)
 {
@@ -2153,7 +2099,6 @@ void SComfyUIPanel::StartHistoryPoller(const FString& PromptId, const FComfyWork
             TSharedPtr<SComfyUIPanel> Panel = CapturedWeakThis.Pin();
             if (!Panel.IsValid()) return;
 
-            // If WS already handled this, stop polling
             if (Panel->PollingPromptId != PromptId)
             {
                 Panel->StopHistoryPoller();
@@ -2173,20 +2118,16 @@ void SComfyUIPanel::StartHistoryPoller(const FString& PromptId, const FComfyWork
                     TSharedPtr<SComfyUIPanel> Panel = CapturedWeakThis.Pin();
                     if (!Panel.IsValid()) return;
 
-                    // If WS already handled this prompt, bail
                     if (Panel->PollingPromptId != PromptId) return;
-
                     if (!bSucceeded || !Response.IsValid()) return;
 
                     TSharedPtr<FJsonObject> History;
                     const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Response->GetContentAsString());
                     if (!FJsonSerializer::Deserialize(Reader, History) || !History.IsValid()) return;
 
-                    // Check if our prompt has a completed entry
                     const TSharedPtr<FJsonObject>* PromptHistory;
                     if (!History->TryGetObjectField(PromptId, PromptHistory)) return;
 
-                    // Check for execution error
                     const TSharedPtr<FJsonObject>* StatusObj;
                     if ((*PromptHistory)->TryGetObjectField(TEXT("status"), StatusObj))
                     {
@@ -2200,18 +2141,15 @@ void SComfyUIPanel::StartHistoryPoller(const FString& PromptId, const FComfyWork
                                 Panel->OnWorkflowComplete(false, PromptId, CapturedParams);
                                 return;
                             }
-                            // Not finished yet
                             if (StatusStr != TEXT("success"))
                                 return;
                         }
                     }
 
-                    // Check outputs exist
                     const TSharedPtr<FJsonObject>* Outputs;
                     if (!(*PromptHistory)->TryGetObjectField(TEXT("outputs"), Outputs)) return;
                     if ((*Outputs)->Values.Num() == 0) return;
 
-                    // Looks complete — hand off to OnWorkflowComplete
                     UE_LOG(LogTemp, Warning, TEXT("ComfyUI Poller: Detected completion for prompt %s (WS fallback)"), *PromptId);
                     Panel->StopHistoryPoller();
                     Panel->OnWorkflowComplete(true, PromptId, CapturedParams);
@@ -2219,8 +2157,8 @@ void SComfyUIPanel::StartHistoryPoller(const FString& PromptId, const FComfyWork
 
             Request->ProcessRequest();
         },
-        5.0f,  // poll every 5 seconds
-        true   // looping
+        5.0f,
+        true
     );
 
     UE_LOG(LogTemp, Warning, TEXT("ComfyUI Poller: Started for prompt %s"), *PromptId);
@@ -2235,6 +2173,7 @@ void SComfyUIPanel::StopHistoryPoller()
     }
     PollingPromptId = TEXT("");
 }
+
 bool SComfyUIPanel::LoadWorkflowFromFile(const FString& RelativePath, TSharedPtr<FJsonObject>& OutWorkflow)
 {
     FString WorkflowPath;
@@ -2295,8 +2234,8 @@ void SComfyUIPanel::LoadAndDisplayImage(const FString& FilePath, bool bPreviewB)
     Brush = MakeShared<FSlateBrush>();
     Brush->SetResourceObject(Texture);
     Brush->ImageSize = FVector2D(Texture->GetSizeX(), Texture->GetSizeY());
-    Brush->DrawAs = ESlateBrushDrawType::Image;
-    Brush->Tiling = ESlateBrushTileType::NoTile;
+    Brush->DrawAs   = ESlateBrushDrawType::Image;
+    Brush->Tiling   = ESlateBrushTileType::NoTile;
 
     if (Preview.IsValid())
         Preview->SetImage(Brush.Get());
@@ -2304,17 +2243,19 @@ void SComfyUIPanel::LoadAndDisplayImage(const FString& FilePath, bool bPreviewB)
 
 void SComfyUIPanel::OnModelFamilyChanged(TSharedPtr<FString> NewSelection, ESelectInfo::Type)
 {
+    // Fix #7: null guard
+    if (!NewSelection.IsValid()) return;
+
     SelectedModelFamilyOption = NewSelection;
     SelectedModelFamily = (*NewSelection == TEXT("Qwen"))
         ? EComfyUIModelFamily::Qwen
         : EComfyUIModelFamily::Flux;
 
-    // Rebuild presets so the dropdown shows model-appropriate options.
     RebuildResolutionOptions();
 }
 
-void SComfyUIPanel::OnPromptTextChanged(const FText& NewText)        { PromptText = NewText.ToString(); }
-void SComfyUIPanel::OnNegativePromptTextChanged(const FText& NewText) { NegativePromptText = NewText.ToString(); }
+void SComfyUIPanel::OnPromptTextChanged(const FText& NewText)         { PromptText = NewText.ToString(); }
+void SComfyUIPanel::OnNegativePromptTextChanged(const FText& NewText)  { NegativePromptText = NewText.ToString(); }
 
 // ============================================================================
 // Destructor
@@ -2325,7 +2266,7 @@ SComfyUIPanel::~SComfyUIPanel()
     if (GEditor && ConnectionTimerHandle.IsValid())
         GEditor->GetTimerManager()->ClearTimer(ConnectionTimerHandle);
 
-    if (GEditor && PollingTimerHandle.IsValid())         
+    if (GEditor && PollingTimerHandle.IsValid())
         GEditor->GetTimerManager()->ClearTimer(PollingTimerHandle);
 
     auto CleanBrush = [](TSharedPtr<FSlateBrush>& Brush) {

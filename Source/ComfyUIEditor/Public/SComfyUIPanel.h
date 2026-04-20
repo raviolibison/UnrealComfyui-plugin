@@ -72,7 +72,7 @@ public:
 
 private:
     // ---- Tab layout --------------------------------------------------------
-    TSharedPtr<SWidgetSwitcher> TabSwitcher;
+    TSharedPtr<SWidgetSwitcher> TabSwitcher = nullptr;
     TSharedRef<SWidget> BuildGenerateTab();
     TSharedRef<SWidget> BuildSettingsTab();
 
@@ -83,25 +83,25 @@ private:
     bool bIsComfyReady = false;
 
     // ---- Previews ----------------------------------------------------------
-    TSharedPtr<class SImage> PreviewImageA;
-    TSharedPtr<FSlateBrush>  ImageBrushA;
+    TSharedPtr<class SImage> PreviewImageA = nullptr;
+    TSharedPtr<FSlateBrush>  ImageBrushA = nullptr;
     FString PreviewImagePathA;
 
-    TSharedPtr<class SImage> PreviewImageB;
-    TSharedPtr<FSlateBrush>  ImageBrushB;
+    TSharedPtr<class SImage> PreviewImageB = nullptr;
+    TSharedPtr<FSlateBrush>  ImageBrushB = nullptr;
     FString PreviewImagePathB;
 
-    TWeakPtr<SComfyUIPanel> WeakThis;
+    TWeakPtr<SComfyUIPanel> WeakThis = nullptr;
 
     // ---- Model family ------------------------------------------------------
     EComfyUIModelFamily SelectedModelFamily = EComfyUIModelFamily::Qwen;
     TArray<TSharedPtr<FString>> ModelFamilyOptions;
-    TSharedPtr<FString> SelectedModelFamilyOption;
+    TSharedPtr<FString> SelectedModelFamilyOption = nullptr;
 
     // ---- Resolution --------------------------------------------------------
     // Populated by RebuildResolutionOptions() whenever the model family changes.
     TArray<TSharedPtr<FResolutionOption>> ResolutionOptions;
-    TSharedPtr<FResolutionOption>         SelectedResolution;
+    TSharedPtr<FResolutionOption>         SelectedResolution = nullptr;
 
     // Free-entry fields shown only when the Custom row is selected.
     int32 CustomWidth  = 1024;
@@ -110,7 +110,7 @@ private:
     // ---- Img2Img upscale (separate from generation upscale) ----------------
     EUpscaleMode Img2ImgUpscaleMode = EUpscaleMode::None;
     TArray<TSharedPtr<FString>> Img2ImgUpscaleOptions;
-    TSharedPtr<FString>         SelectedImg2ImgUpscaleOption;
+    TSharedPtr<FString>         SelectedImg2ImgUpscaleOption = nullptr;
 
     // ---- Generation state --------------------------------------------------
     FString CurrentPromptId;
@@ -126,17 +126,17 @@ private:
 
     // ---- Composure ---------------------------------------------------------
     FString LastImportedImagePath;
-    TWeakObjectPtr<UTexture2D> LastImportedTexture;
+    TWeakObjectPtr<UTexture2D> LastImportedTexture = nullptr;
 
     // ---- Per-model sampler/scheduler settings ------------------------------
     FQwenSettings QwenSettings;
     FFluxSettings FluxSettings;
     TArray<TSharedPtr<FString>> SamplerOptions;
     TArray<TSharedPtr<FString>> SchedulerOptions;
-    TSharedPtr<FString> QwenSelectedSampler;
-    TSharedPtr<FString> QwenSelectedScheduler;
-    TSharedPtr<FString> FluxSelectedSampler;
-    TSharedPtr<FString> FluxSelectedScheduler;
+    TSharedPtr<FString> QwenSelectedSampler = nullptr;
+    TSharedPtr<FString> QwenSelectedScheduler = nullptr;
+    TSharedPtr<FString> FluxSelectedSampler = nullptr;
+    TSharedPtr<FString> FluxSelectedScheduler = nullptr;
 
     // ---- HDR ---------------------------------------------------------------
     FString       ConvertImageToHDR(const FString& SourceImagePath);
