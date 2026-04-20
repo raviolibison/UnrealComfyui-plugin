@@ -39,6 +39,22 @@
 
 void SComfyUIPanel::Construct(const FArguments& InArgs)
 {
+
+   
+    SelectedResolution.Reset();
+    SelectedModelFamilyOption.Reset();
+    SelectedImg2ImgUpscaleOption.Reset();
+    QwenSelectedSampler.Reset();
+    QwenSelectedScheduler.Reset();
+    FluxSelectedSampler.Reset();
+    FluxSelectedScheduler.Reset();
+    PreviewImageA.Reset();
+    PreviewImageB.Reset();
+    ImageBrushA.Reset();
+    ImageBrushB.Reset();
+    TabSwitcher.Reset();
+    LastImportedTexture.Reset();
+
     // ---- Model family options -----------------------------------------------
     ModelFamilyOptions.Add(MakeShared<FString>(TEXT("Flux")));
     ModelFamilyOptions.Add(MakeShared<FString>(TEXT("Qwen")));
@@ -61,9 +77,12 @@ void SComfyUIPanel::Construct(const FArguments& InArgs)
                                      TEXT("sgm_uniform"), TEXT("beta") })
         SchedulerOptions.Add(MakeShared<FString>(S));
 
-    auto FindOption = [](TArray<TSharedPtr<FString>>& Opts, const FString& Val) -> TSharedPtr<FString> {
-        for (auto& O : Opts) if (*O == Val) return O;
-        return Opts[0];
+    auto FindOption = [](TArray<TSharedPtr<FString>>& Opts,
+        const FString& Val) -> TSharedPtr<FString>
+        {
+            if (Opts.Num() == 0) return nullptr; 
+            for (auto& O : Opts) if (*O == Val) return O;
+            return Opts[0];
         };
 
     QwenSelectedSampler = FindOption(SamplerOptions, QwenSettings.Sampler);
@@ -184,31 +203,33 @@ TSharedRef<SWidget> SComfyUIPanel::BuildGenerateTab()
                 [
                     SNew(SHorizontalBox)
 
-                        // Label
                         + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
                         [
                             SNew(STextBlock).Text(LOCTEXT("ResLabel", "Resolution: "))
                         ]
 
-                        // Dropdown
                         + SHorizontalBox::Slot().Padding(10, 0, 0, 0).AutoWidth()
                         [
                             SNew(SComboBox<TSharedPtr<FResolutionOption>>)
                                 .OptionsSource(&ResolutionOptions)
                                 .OnSelectionChanged(this, &SComfyUIPanel::OnResolutionChanged)
-                                .OnGenerateWidget_Lambda([](TSharedPtr<FResolutionOption> Item) {
+                                .OnGenerateWidget_Lambda([](TSharedPtr<FResolutionOption> Item) -> TSharedRef<SWidget> {
+                                if (!Item.IsValid())
+                                    return SNew(STextBlock).Text(FText::GetEmpty());
                                 return SNew(STextBlock).Text(FText::FromString(Item->Label));
                                     })
-                                .InitiallySelectedItem(SelectedResolution)
+                                // Do NOT pass InitiallySelectedItem — let the combo default to the
+                                // first entry.  We drive the displayed text via the child lambda.
                                 [
-                                    SNew(STextBlock).Text_Lambda([this]() {
-                                        return FText::FromString(
-                                            SelectedResolution.IsValid() ? SelectedResolution->Label : TEXT(""));
+                                    SNew(STextBlock).Text_Lambda([this]() -> FText {
+                                        if (!SelectedResolution.IsValid())
+                                            return FText::GetEmpty();
+                                        return FText::FromString(SelectedResolution->Label);
                                         })
                                 ]
                         ]
 
-                    // "W:" label + custom width entry (hidden unless Custom selected)
+                    // "W:" + custom width (hidden unless Custom selected)
                     + SHorizontalBox::Slot().Padding(10, 0, 0, 0).AutoWidth().VAlign(VAlign_Center)
                         [
                             SNew(STextBlock)
@@ -228,7 +249,7 @@ TSharedRef<SWidget> SComfyUIPanel::BuildGenerateTab()
                                 .MinValue(64).MaxValue(8192).MinDesiredValueWidth(70)
                         ]
 
-                    // "H:" label + custom height entry (hidden unless Custom selected)
+                    // "H:" + custom height (hidden unless Custom selected)
                     + SHorizontalBox::Slot().Padding(10, 0, 0, 0).AutoWidth().VAlign(VAlign_Center)
                         [
                             SNew(STextBlock)
@@ -249,7 +270,7 @@ TSharedRef<SWidget> SComfyUIPanel::BuildGenerateTab()
                         ]
                 ]
 
-            // Warning shown only for custom resolution
+            // Warning for custom resolution
             + SVerticalBox::Slot().AutoHeight().Padding(0, 2, 0, 8)
                 [
                     SNew(STextBlock)
@@ -765,18 +786,33 @@ void SComfyUIPanel::RebuildResolutionOptions()
     CustomOpt->bIsCustom = true;
     ResolutionOptions.Add(CustomOpt);
 
-    // Restore previous selection by label match, else default to first preset.
+    // Safety check — should never happen, but guard anyway
+    if (ResolutionOptions.Num() == 0)
+    {
+        auto Fallback = MakeShared<FResolutionOption>();
+        Fallback->Label = TEXT("1024×1024");
+        Fallback->GenWidth = 1024;
+        Fallback->GenHeight = 1024;
+        Fallback->FinalWidth = 1024;
+        Fallback->FinalHeight = 1024;
+        ResolutionOptions.Add(Fallback);
+    }
+
+    // Try to restore previous selection by label; always fall back to index 0.
     FString PrevLabel = SelectedResolution.IsValid() ? SelectedResolution->Label : TEXT("");
-    SelectedResolution = ResolutionOptions[0];   // safe fallback
+    SelectedResolution = ResolutionOptions[0];   // guaranteed non-null
 
     for (auto& Opt : ResolutionOptions)
     {
-        if (Opt->Label == PrevLabel)
+        if (Opt.IsValid() && Opt->Label == PrevLabel)
         {
             SelectedResolution = Opt;
             break;
         }
     }
+
+    // Final paranoia check
+    check(SelectedResolution.IsValid());
 }
 
 void SComfyUIPanel::GetEffectiveResolution(int32& OutGenW, int32& OutGenH,
@@ -1101,6 +1137,23 @@ void SComfyUIPanel::StartGeneration()
     WorkflowParams.bAutoImport = false;
     WorkflowParams.bTargetPreviewB = false;
 
+    const int32 Seed = FMath::Abs((int32)(FDateTime::Now().GetTicks() % MAX_int32));
+
+    // =========================================================================
+    // QWEN  (qwen_Image_2512_API.json)
+    // =========================================================================
+    // Node map:
+    //   248  EmptySD3LatentImage  — width, height
+    //   249  CLIPTextEncode       — positive prompt text
+    //   250  CLIPTextEncode       — negative prompt text
+    //   252  PrimitiveFloat       — CFG value
+    //   260  ModelSamplingAuraFlow — shift
+    //   261  KSampler             — seed, steps, sampler_name, scheduler
+    //   262  VAEDecode
+    //   263  UpscaleModelLoader   — model_name
+    //   264  ImageUpscaleWithModel — image from 262, upscale_model from 263
+    //   268  SaveImage            — images from 264 (or 262 when no upscale)
+    // =========================================================================
     if (SelectedModelFamily == EComfyUIModelFamily::Qwen)
     {
         TSharedPtr<FJsonObject> WorkflowObj;
@@ -1110,61 +1163,72 @@ void SComfyUIPanel::StartGeneration()
             return;
         }
 
-        // Patch gen resolution
+        // Latent resolution
         if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("248")))
         {
             N->GetObjectField(TEXT("inputs"))->SetNumberField(TEXT("width"), GenW);
             N->GetObjectField(TEXT("inputs"))->SetNumberField(TEXT("height"), GenH);
         }
 
-        // Patch prompt
+        // Positive prompt
         if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("249")))
             N->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("text"), PromptText);
 
-        // Patch seed
-        int32 Seed = FMath::Abs((int32)(FDateTime::Now().GetTicks() % MAX_int32));
-        if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("261")))
-            N->GetObjectField(TEXT("inputs"))->SetNumberField(TEXT("seed"), Seed);
-        if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("266")))
-            N->GetObjectField(TEXT("inputs"))->SetNumberField(TEXT("seed"), Seed + 1);
-
-        // Patch sampler settings
-        if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("261")))
-        {
-            N->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("sampler_name"), QwenSettings.Sampler);
-            N->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("scheduler"), QwenSettings.Scheduler);
-        }
-        if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("251")))
-            N->GetObjectField(TEXT("inputs"))->SetNumberField(TEXT("value"), QwenSettings.Steps);
+        // CFG
         if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("252")))
             N->GetObjectField(TEXT("inputs"))->SetNumberField(TEXT("value"), QwenSettings.CFGScale);
+
+        // Shift
         if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("260")))
             N->GetObjectField(TEXT("inputs"))->SetNumberField(TEXT("shift"), QwenSettings.Shift);
 
-        // Patch filename prefix
-        if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("268")))
-            N->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("filename_prefix"), CurrentFilenamePrefix);
+        // KSampler
+        if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("261")))
+        {
+            auto Inputs = N->GetObjectField(TEXT("inputs"));
+            Inputs->SetNumberField(TEXT("seed"), Seed);
+            Inputs->SetNumberField(TEXT("steps"), QwenSettings.Steps);
+            Inputs->SetStringField(TEXT("sampler_name"), QwenSettings.Sampler);
+            Inputs->SetStringField(TEXT("scheduler"), QwenSettings.Scheduler);
+        }
 
-        // Upscale handling — single pass only, no second KSampler
+        // Filename prefix + upscale routing
         if (UpscaleMode == EUpscaleMode::None)
         {
+            // Disable the upscale nodes and wire SaveImage directly to VAEDecode
             DisableNode(WorkflowObj, TEXT("263"));
             DisableNode(WorkflowObj, TEXT("264"));
-            DisableNode(WorkflowObj, TEXT("265"));
-            DisableNode(WorkflowObj, TEXT("266"));
-            DisableNode(WorkflowObj, TEXT("267"));
             PatchSaveImageInput(WorkflowObj, TEXT("268"), TEXT("262"), 0);
         }
         else
         {
+            // Set the upscale model; 264 already wires 263→262→268
             if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("263")))
                 N->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("model_name"),
                     GetUpscalerModel(UpscaleMode));
         }
 
+        if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("268")))
+            N->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("filename_prefix"),
+                CurrentFilenamePrefix);
+
         WorkflowParams.WorkflowJson = SerializeWorkflow(WorkflowObj);
     }
-    else // Flux
+
+    // =========================================================================
+    // FLUX  (Flux_2_klein_API.json)
+    // =========================================================================
+    // Node map:
+    //   17  EmptyFlux2LatentImage — width, height
+    //   18  RandomNoise          — noise_seed
+    //   19  Flux2Scheduler       — steps, width, height
+    //   20  KSamplerSelect       — sampler_name
+    //   22  VAEDecode
+    //   24  UpscaleModelLoader   — model_name
+    //   25  ImageUpscaleWithModel — image from 22, upscale_model from 24
+    //   33  SaveImage            — images from 25 (or 22 when no upscale)
+    // =========================================================================
+    else
     {
         TSharedPtr<FJsonObject> WorkflowObj;
         if (!LoadWorkflowFromFile(TEXT("workflows/Flux_2_klein_API.json"), WorkflowObj))
@@ -1173,12 +1237,14 @@ void SComfyUIPanel::StartGeneration()
             return;
         }
 
-        // Patch gen resolution
+        // Latent resolution
         if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("17")))
         {
             N->GetObjectField(TEXT("inputs"))->SetNumberField(TEXT("width"), GenW);
             N->GetObjectField(TEXT("inputs"))->SetNumberField(TEXT("height"), GenH);
         }
+
+        // Scheduler resolution + steps (Flux2Scheduler needs matching dims)
         if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("19")))
         {
             N->GetObjectField(TEXT("inputs"))->SetNumberField(TEXT("width"), GenW);
@@ -1186,42 +1252,38 @@ void SComfyUIPanel::StartGeneration()
             N->GetObjectField(TEXT("inputs"))->SetNumberField(TEXT("steps"), FluxSettings.Steps);
         }
 
-        // Patch prompt
+        // Seed
+        if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("18")))
+            N->GetObjectField(TEXT("inputs"))->SetNumberField(TEXT("noise_seed"), Seed);
+
+        // Sampler
+        if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("20")))
+            N->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("sampler_name"),
+                FluxSettings.Sampler);
+
+        // Positive prompt
         if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("14")))
             N->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("text"), PromptText);
 
-        // Patch seed
-        int32 Seed = FMath::Abs((int32)(FDateTime::Now().GetTicks() % MAX_int32));
-        if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("18")))
-            N->GetObjectField(TEXT("inputs"))->SetNumberField(TEXT("noise_seed"), Seed);
-        if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("30")))
-            N->GetObjectField(TEXT("inputs"))->SetNumberField(TEXT("seed"), Seed + 1);
-
-        // Patch sampler
-        if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("20")))
-            N->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("sampler_name"), FluxSettings.Sampler);
-
-        // Patch filename prefix
-        if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("33")))
-            N->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("filename_prefix"), CurrentFilenamePrefix);
-
-        // Upscale handling — single ImageUpscaleWithModel pass only
+        // Filename prefix + upscale routing
         if (UpscaleMode == EUpscaleMode::None)
         {
+            // Disable the upscale nodes and wire SaveImage directly to VAEDecode
             DisableNode(WorkflowObj, TEXT("24"));
             DisableNode(WorkflowObj, TEXT("25"));
-            DisableNode(WorkflowObj, TEXT("26"));
-            DisableNode(WorkflowObj, TEXT("30"));
-            DisableNode(WorkflowObj, TEXT("31"));
-            DisableNode(WorkflowObj, TEXT("32"));
             PatchSaveImageInput(WorkflowObj, TEXT("33"), TEXT("22"), 0);
         }
         else
         {
+            // Set the upscale model; 25 already wires 24→22→33
             if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("24")))
                 N->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("model_name"),
                     GetUpscalerModel(UpscaleMode));
         }
+
+        if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("33")))
+            N->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("filename_prefix"),
+                CurrentFilenamePrefix);
 
         WorkflowParams.WorkflowJson = SerializeWorkflow(WorkflowObj);
     }
@@ -1538,7 +1600,10 @@ FReply SComfyUIPanel::OnApplyToComposureClicked(FString SourcePath)
 
 void SComfyUIPanel::OnResolutionChanged(TSharedPtr<FResolutionOption> NewSelection, ESelectInfo::Type)
 {
-    SelectedResolution = NewSelection;
+    if (NewSelection.IsValid()) 
+    {
+        SelectedResolution = NewSelection;
+    }
 }
 
 // ============================================================================
