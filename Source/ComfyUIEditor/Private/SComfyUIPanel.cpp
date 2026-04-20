@@ -39,50 +39,24 @@
 
 void SComfyUIPanel::Construct(const FArguments& InArgs)
 {
-    // Resolution options — Label, OutputW, OutputH, UpscaleMode, GenW, GenH
-    auto AddRes = [this](const FString& Label, int32 W, int32 H,
-        EUpscaleMode Mode, int32 GW, int32 GH)
-        {
-            auto Opt = MakeShared<FResolutionOption>();
-            Opt->Label = Label; Opt->Width = W; Opt->Height = H;
-            Opt->UpscaleMode = Mode; Opt->GenWidth = GW; Opt->GenHeight = GH;
-            ResolutionOptions.Add(Opt);
-        };
-
-    // None — direct generation
-    AddRes(TEXT("512x512"), 512, 512, EUpscaleMode::None, 512, 512);
-    AddRes(TEXT("768x768"), 768, 768, EUpscaleMode::None, 768, 768);
-    AddRes(TEXT("1024x1024"), 1024, 1024, EUpscaleMode::None, 1024, 1024);
-    AddRes(TEXT("1280x720"), 1280, 720, EUpscaleMode::None, 1280, 720);
-    AddRes(TEXT("1920x1080"), 1920, 1080, EUpscaleMode::None, 1920, 1080);
-
-    // 2x upscale
-    AddRes(TEXT("2048x2048 (2x)"), 2048, 2048, EUpscaleMode::TwoX, 1024, 1024);
-    AddRes(TEXT("2560x1440 (2x)"), 2560, 1440, EUpscaleMode::TwoX, 1280, 720);
-    AddRes(TEXT("3840x2160 (2x)"), 3840, 2160, EUpscaleMode::TwoX, 1920, 1080);
-
-    // 4x upscale
-    AddRes(TEXT("4096x4096 (4x)"), 4096, 4096, EUpscaleMode::FourX, 1024, 1024);
-    AddRes(TEXT("3840x2160 (4x)"), 3840, 2160, EUpscaleMode::FourX, 960, 540);
-    AddRes(TEXT("4096x2304 (4x)"), 4096, 2304, EUpscaleMode::FourX, 1024, 576);
-    AddRes(TEXT("7680x4320 (4x)"), 7680, 4320, EUpscaleMode::FourX, 1920, 1080);
-    AddRes(TEXT("8192x8192 (4x)"), 8192, 8192, EUpscaleMode::FourX, 2048, 2048);
-
-    Img2ImgUpscaleOptions.Add(MakeShared<FString>(TEXT("No Upscale")));
-    Img2ImgUpscaleOptions.Add(MakeShared<FString>(TEXT("2x Upscale")));
-    Img2ImgUpscaleOptions.Add(MakeShared<FString>(TEXT("4x Upscale")));
-    SelectedImg2ImgUpscaleOption = Img2ImgUpscaleOptions[0];
-
+    // ---- Model family options -----------------------------------------------
     ModelFamilyOptions.Add(MakeShared<FString>(TEXT("Flux")));
     ModelFamilyOptions.Add(MakeShared<FString>(TEXT("Qwen")));
-    SelectedModelFamilyOption = ModelFamilyOptions[1];
+    SelectedModelFamilyOption = ModelFamilyOptions[1];   // default Qwen
+    SelectedModelFamily = EComfyUIModelFamily::Qwen;
 
-    // Sampler options
+    // ---- Img2Img upscale options --------------------------------------------
+    Img2ImgUpscaleOptions.Add(MakeShared<FString>(TEXT("No upscale")));
+    Img2ImgUpscaleOptions.Add(MakeShared<FString>(TEXT("2x upscale")));
+    Img2ImgUpscaleOptions.Add(MakeShared<FString>(TEXT("4x upscale")));
+    SelectedImg2ImgUpscaleOption = Img2ImgUpscaleOptions[0];
+
+    // ---- Sampler / scheduler ------------------------------------------------
     for (auto& S : TArray<FString>{ TEXT("euler"), TEXT("euler_ancestral"), TEXT("dpmpp_2m"),
-                                     TEXT("dpmpp_2m_sde"), TEXT("dpmpp_3m_sde"), TEXT("heun"), TEXT("res_multistep") })
+                                     TEXT("dpmpp_2m_sde"), TEXT("dpmpp_3m_sde"), TEXT("heun"),
+                                     TEXT("res_multistep") })
         SamplerOptions.Add(MakeShared<FString>(S));
 
-    // Scheduler options
     for (auto& S : TArray<FString>{ TEXT("simple"), TEXT("karras"), TEXT("exponential"),
                                      TEXT("sgm_uniform"), TEXT("beta") })
         SchedulerOptions.Add(MakeShared<FString>(S));
@@ -97,8 +71,12 @@ void SComfyUIPanel::Construct(const FArguments& InArgs)
     FluxSelectedSampler = FindOption(SamplerOptions, FluxSettings.Sampler);
     FluxSelectedScheduler = FindOption(SchedulerOptions, FluxSettings.Scheduler);
 
-    StatusText = TEXT("Connecting..."); 
-    WeakThis = SharedThis(this);         
+    // ---- Resolution presets (model-aware) -----------------------------------
+    RebuildResolutionOptions();   // populates ResolutionOptions, sets SelectedResolution
+
+    // ---- Status / polling ---------------------------------------------------
+    StatusText = TEXT("Connecting...");
+    WeakThis = SharedThis(this);
     PollComfyConnection();
 
     ChildSlot
@@ -202,12 +180,17 @@ TSharedRef<SWidget> SComfyUIPanel::BuildGenerateTab()
                         .OnTextChanged(this, &SComfyUIPanel::OnNegativePromptTextChanged)
                 ]
 
-                // --- Resolution ---
                 + SVerticalBox::Slot().AutoHeight().Padding(0, 5)
                 [
                     SNew(SHorizontalBox)
+
+                        // Label
                         + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
-                        [SNew(STextBlock).Text(LOCTEXT("ResLabel", "Output Resolution: "))]
+                        [
+                            SNew(STextBlock).Text(LOCTEXT("ResLabel", "Resolution: "))
+                        ]
+
+                        // Dropdown
                         + SHorizontalBox::Slot().Padding(10, 0, 0, 0).AutoWidth()
                         [
                             SNew(SComboBox<TSharedPtr<FResolutionOption>>)
@@ -217,11 +200,67 @@ TSharedRef<SWidget> SComfyUIPanel::BuildGenerateTab()
                                 return SNew(STextBlock).Text(FText::FromString(Item->Label));
                                     })
                                 .InitiallySelectedItem(SelectedResolution)
-                                [SNew(STextBlock).Text_Lambda([this]() {
-                                return FText::FromString(
-                                    SelectedResolution.IsValid() ? SelectedResolution->Label : TEXT(""));
-                                    })]
+                                [
+                                    SNew(STextBlock).Text_Lambda([this]() {
+                                        return FText::FromString(
+                                            SelectedResolution.IsValid() ? SelectedResolution->Label : TEXT(""));
+                                        })
+                                ]
                         ]
+
+                    // "W:" label + custom width entry (hidden unless Custom selected)
+                    + SHorizontalBox::Slot().Padding(10, 0, 0, 0).AutoWidth().VAlign(VAlign_Center)
+                        [
+                            SNew(STextBlock)
+                                .Text(LOCTEXT("CustomWLabel", "W:"))
+                                .Visibility_Lambda([this]() {
+                                return IsCustomResSelected() ? EVisibility::Visible : EVisibility::Collapsed;
+                                    })
+                        ]
+                    + SHorizontalBox::Slot().Padding(4, 0, 0, 0).AutoWidth()
+                        [
+                            SNew(SNumericEntryBox<int32>)
+                                .Visibility_Lambda([this]() {
+                                return IsCustomResSelected() ? EVisibility::Visible : EVisibility::Collapsed;
+                                    })
+                                .Value_Lambda([this]() { return TOptional<int32>(CustomWidth); })
+                                .OnValueChanged_Lambda([this](int32 V) { CustomWidth = FMath::Max(64, V); })
+                                .MinValue(64).MaxValue(8192).MinDesiredValueWidth(70)
+                        ]
+
+                    // "H:" label + custom height entry (hidden unless Custom selected)
+                    + SHorizontalBox::Slot().Padding(10, 0, 0, 0).AutoWidth().VAlign(VAlign_Center)
+                        [
+                            SNew(STextBlock)
+                                .Text(LOCTEXT("CustomHLabel", "H:"))
+                                .Visibility_Lambda([this]() {
+                                return IsCustomResSelected() ? EVisibility::Visible : EVisibility::Collapsed;
+                                    })
+                        ]
+                    + SHorizontalBox::Slot().Padding(4, 0, 0, 0).AutoWidth()
+                        [
+                            SNew(SNumericEntryBox<int32>)
+                                .Visibility_Lambda([this]() {
+                                return IsCustomResSelected() ? EVisibility::Visible : EVisibility::Collapsed;
+                                    })
+                                .Value_Lambda([this]() { return TOptional<int32>(CustomHeight); })
+                                .OnValueChanged_Lambda([this](int32 V) { CustomHeight = FMath::Max(64, V); })
+                                .MinValue(64).MaxValue(8192).MinDesiredValueWidth(70)
+                        ]
+                ]
+
+            // Warning shown only for custom resolution
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 2, 0, 8)
+                [
+                    SNew(STextBlock)
+                        .Visibility_Lambda([this]() {
+                        return IsCustomResSelected() ? EVisibility::Visible : EVisibility::Collapsed;
+                            })
+                        .Text(LOCTEXT("CustomResWarning",
+                            "Custom resolution may produce lower quality. Model works best at the listed presets."))
+                        .Font(FCoreStyle::GetDefaultFontStyle("Italic", 9))
+                        .ColorAndOpacity(FLinearColor(1.f, 0.75f, 0.f, 0.85f))
+                        .AutoWrapText(true)
                 ]
 
             // --- Generate / Browse ---
@@ -640,6 +679,133 @@ TSharedRef<SWidget> SComfyUIPanel::BuildSettingsTab()
 // Generic Workflow System
 // ============================================================================
 
+void SComfyUIPanel::AddResPreset(const FString& Label,
+    int32 GenW, int32 GenH,
+    EUpscaleMode Mode,
+    int32 FinalW, int32 FinalH)
+{
+    auto Opt = MakeShared<FResolutionOption>();
+    Opt->Label = Label;
+    Opt->GenWidth = GenW;
+    Opt->GenHeight = GenH;
+    Opt->FinalWidth = FinalW;
+    Opt->FinalHeight = FinalH;
+    Opt->UpscaleMode = Mode;
+    Opt->bIsCustom = false;
+    ResolutionOptions.Add(Opt);
+}
+
+void SComfyUIPanel::RebuildResolutionOptions()
+{
+    ResolutionOptions.Empty();
+
+    if (SelectedModelFamily == EComfyUIModelFamily::Qwen)
+    {
+        // ── Native generation (no upscale) ──────────────────────────────────
+        //   Qwen 2512 native training res: 1328×1328 (~1.77 MP)
+        //   Practical fast alternative: 1024×1024
+        //   Non-square targets same ~1.77 MP budget → 1536×864, 864×1536
+        AddResPreset(TEXT("1024×1024"), 1024, 1024, EUpscaleMode::None, 1024, 1024);
+        AddResPreset(TEXT("1328×1328 (native)"), 1328, 1328, EUpscaleMode::None, 1328, 1328);
+        AddResPreset(TEXT("1280×720"), 1280, 720, EUpscaleMode::None, 1280, 720);
+        AddResPreset(TEXT("1536×864"), 1536, 864, EUpscaleMode::None, 1536, 864);
+        AddResPreset(TEXT("720×1280"), 720, 1280, EUpscaleMode::None, 720, 1280);
+        AddResPreset(TEXT("864×1536"), 864, 1536, EUpscaleMode::None, 864, 1536);
+
+        // ── 2x upscale ───────────────────────────────────────────────────────
+        AddResPreset(TEXT("2048×2048"), 1024, 1024, EUpscaleMode::TwoX, 2048, 2048);
+        AddResPreset(TEXT("2656×2656"), 1328, 1328, EUpscaleMode::TwoX, 2656, 2656);
+        AddResPreset(TEXT("2560×1440"), 1280, 720, EUpscaleMode::TwoX, 2560, 1440);
+        AddResPreset(TEXT("3072×1728"), 1536, 864, EUpscaleMode::TwoX, 3072, 1728);
+        AddResPreset(TEXT("1440×2560"), 720, 1280, EUpscaleMode::TwoX, 1440, 2560);
+        AddResPreset(TEXT("1728×3072"), 864, 1536, EUpscaleMode::TwoX, 1728, 3072);
+
+        // ── 4x upscale ───────────────────────────────────────────────────────
+        AddResPreset(TEXT("4096×4096"), 1024, 1024, EUpscaleMode::FourX, 4096, 4096);
+        AddResPreset(TEXT("5120×2880"), 1280, 720, EUpscaleMode::FourX, 5120, 2880);
+        AddResPreset(TEXT("2880×5120"), 720, 1280, EUpscaleMode::FourX, 2880, 5120);
+    }
+    else // Flux.2 Klein 4B
+    {
+        // ── Native generation (no upscale) ──────────────────────────────────
+        //   Flux.2 Klein supports up to 4 MP; sweet spot 1–2 MP.
+        AddResPreset(TEXT("1024×1024"), 1024, 1024, EUpscaleMode::None, 1024, 1024);
+        AddResPreset(TEXT("1280×720"), 1280, 720, EUpscaleMode::None, 1280, 720);
+        AddResPreset(TEXT("1536×864"), 1536, 864, EUpscaleMode::None, 1536, 864);
+        AddResPreset(TEXT("1920×1080"), 1920, 1080, EUpscaleMode::None, 1920, 1080);
+        AddResPreset(TEXT("720×1280"), 720, 1280, EUpscaleMode::None, 720, 1280);
+        AddResPreset(TEXT("864×1536"), 864, 1536, EUpscaleMode::None, 864, 1536);
+        AddResPreset(TEXT("1080×1920"), 1080, 1920, EUpscaleMode::None, 1080, 1920);
+
+        // ── 2x upscale ───────────────────────────────────────────────────────
+        AddResPreset(TEXT("2048×2048"), 1024, 1024, EUpscaleMode::TwoX, 2048, 2048);
+        AddResPreset(TEXT("2560×1440"), 1280, 720, EUpscaleMode::TwoX, 2560, 1440);
+        AddResPreset(TEXT("3072×1728"), 1536, 864, EUpscaleMode::TwoX, 3072, 1728);
+        AddResPreset(TEXT("3840×2160"), 1920, 1080, EUpscaleMode::TwoX, 3840, 2160);
+        AddResPreset(TEXT("1440×2560"), 720, 1280, EUpscaleMode::TwoX, 1440, 2560);
+        AddResPreset(TEXT("1728×3072"), 864, 1536, EUpscaleMode::TwoX, 1728, 3072);
+        AddResPreset(TEXT("2160×3840"), 1080, 1920, EUpscaleMode::TwoX, 2160, 3840);
+
+        // ── 4x upscale ───────────────────────────────────────────────────────
+        AddResPreset(TEXT("4096×4096"), 1024, 1024, EUpscaleMode::FourX, 4096, 4096);
+        AddResPreset(TEXT("5120×2880"), 1280, 720, EUpscaleMode::FourX, 5120, 2880);
+        AddResPreset(TEXT("7680×4320"), 1920, 1080, EUpscaleMode::FourX, 7680, 4320);
+        AddResPreset(TEXT("2880×5120"), 720, 1280, EUpscaleMode::FourX, 2880, 5120);
+        AddResPreset(TEXT("4320×7680"), 1080, 1920, EUpscaleMode::FourX, 4320, 7680);
+    }
+
+    // ── Custom (always last) ─────────────────────────────────────────────────
+    auto CustomOpt = MakeShared<FResolutionOption>();
+    CustomOpt->Label = TEXT("Custom...");
+    CustomOpt->GenWidth = CustomWidth;
+    CustomOpt->GenHeight = CustomHeight;
+    CustomOpt->FinalWidth = CustomWidth;
+    CustomOpt->FinalHeight = CustomHeight;
+    CustomOpt->UpscaleMode = EUpscaleMode::None;
+    CustomOpt->bIsCustom = true;
+    ResolutionOptions.Add(CustomOpt);
+
+    // Restore previous selection by label match, else default to first preset.
+    FString PrevLabel = SelectedResolution.IsValid() ? SelectedResolution->Label : TEXT("");
+    SelectedResolution = ResolutionOptions[0];   // safe fallback
+
+    for (auto& Opt : ResolutionOptions)
+    {
+        if (Opt->Label == PrevLabel)
+        {
+            SelectedResolution = Opt;
+            break;
+        }
+    }
+}
+
+void SComfyUIPanel::GetEffectiveResolution(int32& OutGenW, int32& OutGenH,
+    int32& OutFinalW, int32& OutFinalH) const
+{
+    if (SelectedResolution.IsValid() && SelectedResolution->bIsCustom)
+    {
+        OutGenW = OutFinalW = CustomWidth;
+        OutGenH = OutFinalH = CustomHeight;
+    }
+    else if (SelectedResolution.IsValid())
+    {
+        OutGenW = SelectedResolution->GenWidth;
+        OutGenH = SelectedResolution->GenHeight;
+        OutFinalW = SelectedResolution->FinalWidth;
+        OutFinalH = SelectedResolution->FinalHeight;
+    }
+    else
+    {
+        OutGenW = OutFinalW = 1024;
+        OutGenH = OutFinalH = 1024;
+    }
+}
+
+bool SComfyUIPanel::IsCustomResSelected() const
+{
+    return SelectedResolution.IsValid() && SelectedResolution->bIsCustom;
+}
+
 void SComfyUIPanel::SubmitWorkflow(const FComfyWorkflowParams& Params)
 {
     TSharedPtr<FJsonObject> PromptObject;
@@ -917,14 +1083,15 @@ void SComfyUIPanel::StartGeneration()
 {
     if (!SelectedResolution.IsValid()) return;
 
-    UE_LOG(LogTemp, Warning, TEXT("ComfyUI: StartGeneration - GenW=%d GenH=%d UpscaleMode=%d"),
-        SelectedResolution.IsValid() ? SelectedResolution->GenWidth : -1,
-        SelectedResolution.IsValid() ? SelectedResolution->GenHeight : -1,
-        SelectedResolution.IsValid() ? (int32)SelectedResolution->UpscaleMode : -1);
+    int32 GenW, GenH, FinalW, FinalH;
+    GetEffectiveResolution(GenW, GenH, FinalW, FinalH);
 
-    const int32 GenW = SelectedResolution->GenWidth;
-    const int32 GenH = SelectedResolution->GenHeight;
-    const EUpscaleMode UpscaleMode = SelectedResolution->UpscaleMode;
+    const EUpscaleMode UpscaleMode =
+        IsCustomResSelected() ? EUpscaleMode::None : SelectedResolution->UpscaleMode;
+
+    UE_LOG(LogTemp, Warning,
+        TEXT("ComfyUI: StartGeneration — GenW=%d GenH=%d FinalW=%d FinalH=%d UpscaleMode=%d"),
+        GenW, GenH, FinalW, FinalH, (int32)UpscaleMode);
 
     FComfyWorkflowParams WorkflowParams;
     WorkflowParams.OutputPrefix = CurrentFilenamePrefix;
@@ -974,11 +1141,11 @@ void SComfyUIPanel::StartGeneration()
         if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("260")))
             N->GetObjectField(TEXT("inputs"))->SetNumberField(TEXT("shift"), QwenSettings.Shift);
 
-        // Patch filename
+        // Patch filename prefix
         if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("268")))
             N->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("filename_prefix"), CurrentFilenamePrefix);
 
-        // Handle upscaler
+        // Upscale handling — single pass only, no second KSampler
         if (UpscaleMode == EUpscaleMode::None)
         {
             DisableNode(WorkflowObj, TEXT("263"));
@@ -991,7 +1158,8 @@ void SComfyUIPanel::StartGeneration()
         else
         {
             if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("263")))
-                N->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("model_name"), GetUpscalerModel(UpscaleMode));
+                N->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("model_name"),
+                    GetUpscalerModel(UpscaleMode));
         }
 
         WorkflowParams.WorkflowJson = SerializeWorkflow(WorkflowObj);
@@ -1033,11 +1201,11 @@ void SComfyUIPanel::StartGeneration()
         if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("20")))
             N->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("sampler_name"), FluxSettings.Sampler);
 
-        // Patch filename
+        // Patch filename prefix
         if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("33")))
             N->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("filename_prefix"), CurrentFilenamePrefix);
 
-        // Handle upscaler
+        // Upscale handling — single ImageUpscaleWithModel pass only
         if (UpscaleMode == EUpscaleMode::None)
         {
             DisableNode(WorkflowObj, TEXT("24"));
@@ -1051,7 +1219,8 @@ void SComfyUIPanel::StartGeneration()
         else
         {
             if (TSharedPtr<FJsonObject> N = WorkflowObj->GetObjectField(TEXT("24")))
-                N->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("model_name"), GetUpscalerModel(UpscaleMode));
+                N->GetObjectField(TEXT("inputs"))->SetStringField(TEXT("model_name"),
+                    GetUpscalerModel(UpscaleMode));
         }
 
         WorkflowParams.WorkflowJson = SerializeWorkflow(WorkflowObj);
@@ -2074,6 +2243,9 @@ void SComfyUIPanel::OnModelFamilyChanged(TSharedPtr<FString> NewSelection, ESele
     SelectedModelFamily = (*NewSelection == TEXT("Qwen"))
         ? EComfyUIModelFamily::Qwen
         : EComfyUIModelFamily::Flux;
+
+    // Rebuild presets so the dropdown shows model-appropriate options.
+    RebuildResolutionOptions();
 }
 
 void SComfyUIPanel::OnPromptTextChanged(const FText& NewText)        { PromptText = NewText.ToString(); }
