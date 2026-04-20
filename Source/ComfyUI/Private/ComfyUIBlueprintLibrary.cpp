@@ -15,6 +15,8 @@
 #include "TimerManager.h"
 #include "Engine/Engine.h"
 #include "Interfaces/IPluginManager.h"
+#include "Dom/JsonObject.h"
+#include "Misc/PackageName.h"
 
 #if WITH_EDITOR
 #include "AssetRegistry/AssetRegistryModule.h"
@@ -94,7 +96,7 @@ void UComfyUIBlueprintLibrary::TryEnsurePortable()
     }
 }
 
-FString UComfyUIBlueprintLibrary::BuildPromptWrapperJson(const TSharedPtr<FJsonObject>& PromptObject, const FString& ClientId)
+static FString BuildPromptWrapperJson(const TSharedPtr<FJsonObject>& PromptObject, const FString& ClientId)
 {
     TSharedPtr<FJsonObject> Wrapper = MakeShared<FJsonObject>();
     Wrapper->SetObjectField(TEXT("prompt"), PromptObject);
@@ -740,6 +742,7 @@ FString UComfyUIBlueprintLibrary::BuildQwenEditWorkflowJson(const FComfyUIQwenEd
     TSharedPtr<FJsonObject> Node186 = MakeShared<FJsonObject>();
     TSharedPtr<FJsonObject> Node186Inputs = MakeShared<FJsonObject>();
     Node186Inputs->SetArrayField(TEXT("pixels"), MakeRef(TEXT("171"), 0));
+    Node186Inputs->SetArrayField(TEXT("vae"), MakeRef(TEXT("172"), 0));
     Node186->SetObjectField(TEXT("inputs"), Node186Inputs);
     Node186->SetStringField(TEXT("class_type"), TEXT("VAEEncode"));
     Root->SetObjectField(TEXT("186"), Node186);

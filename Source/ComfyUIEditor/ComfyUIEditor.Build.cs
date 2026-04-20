@@ -30,7 +30,7 @@ public class ComfyUIEditor : ModuleRules
                 "Json",
                 "JsonUtilities",
                 "Engine",
-                "projects",
+                "Projects",
                 "RenderCore",
                 "HDRIBackdrop"
             }

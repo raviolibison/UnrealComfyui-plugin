@@ -22,7 +22,7 @@ struct FComfyWorkflowParams
 };
 
 // ============================================================================
-// Per-model settings structs
+// Per-model settings
 // ============================================================================
 struct FQwenSettings
 {
@@ -42,6 +42,22 @@ struct FFluxSettings
 };
 
 // ============================================================================
+// Resolution option
+// ============================================================================
+
+enum class EUpscaleMode : uint8 { None, TwoX, FourX };
+
+struct FResolutionOption
+{
+    FString Label;
+    int32 Width;
+    int32 Height;
+    EUpscaleMode UpscaleMode;
+    int32 GenWidth;
+    int32 GenHeight;
+};
+
+// ============================================================================
 // SComfyUIPanel
 // ============================================================================
 class SComfyUIPanel : public SCompoundWidget
@@ -54,18 +70,12 @@ public:
     virtual ~SComfyUIPanel();
 
 private:
-    // -------------------------------------------------------------------------
     // Tab switcher
-    // -------------------------------------------------------------------------
     TSharedPtr<SWidgetSwitcher> TabSwitcher;
-    int32 ActiveTabIndex = 0;
-
     TSharedRef<SWidget> BuildGenerateTab();
     TSharedRef<SWidget> BuildSettingsTab();
 
-    // -------------------------------------------------------------------------
     // UI State
-    // -------------------------------------------------------------------------
     FString PromptText = TEXT("Beautiful Scandinavian forest, big open foreground with tire tracks and puddles");
     FString NegativePromptText = TEXT("cartoon, low quality, blurry, distorted, unrealistic, people, vehicles");
     FString StatusText;
@@ -89,12 +99,12 @@ private:
     TSharedPtr<FString> SelectedModelFamilyOption;
 
     // Resolution
-    TArray<TSharedPtr<FString>> WidthOptions;
-    TArray<TSharedPtr<FString>> HeightOptions;
-    TSharedPtr<FString> SelectedWidth;
-    TSharedPtr<FString> SelectedHeight;
-    int32 CustomWidth = 1024;
-    int32 CustomHeight = 1024;
+    TArray<TSharedPtr<FResolutionOption>> ResolutionOptions;
+    TSharedPtr<FResolutionOption> SelectedResolution;
+    EUpscaleMode Img2ImgUpscaleMode = EUpscaleMode::None;
+    TArray<TSharedPtr<FString>> Img2ImgUpscaleOptions;
+    TSharedPtr<FString> SelectedImg2ImgUpscaleOption;
+
 
     // Generation state
     FString CurrentPromptId;
@@ -112,62 +122,56 @@ private:
     FString LastImportedImagePath;
     TWeakObjectPtr<UTexture2D> LastImportedTexture;
 
-    // -------------------------------------------------------------------------
     // Per-model settings
-    // -------------------------------------------------------------------------
     FQwenSettings QwenSettings;
     FFluxSettings FluxSettings;
-
-    // Sampler/scheduler options shared between models
     TArray<TSharedPtr<FString>> SamplerOptions;
     TArray<TSharedPtr<FString>> SchedulerOptions;
-
-    // Qwen settings selected items
     TSharedPtr<FString> QwenSelectedSampler;
     TSharedPtr<FString> QwenSelectedScheduler;
-
-    // Flux settings selected items
     TSharedPtr<FString> FluxSelectedSampler;
     TSharedPtr<FString> FluxSelectedScheduler;
 
-    // -------------------------------------------------------------------------
     // HDR
-    // -------------------------------------------------------------------------
     FString ConvertImageToHDR(const FString& SourceImagePath);
     UTextureCube* ImportHDRToProject(const FString& HdrFilePath, const FString& AssetName);
     void ApplyTextureToHDRIBackdrop(UTextureCube* Texture);
 
-    // -------------------------------------------------------------------------
     // Workflow system
-    // -------------------------------------------------------------------------
     void SubmitWorkflow(const FComfyWorkflowParams& Params);
     void OnWorkflowComplete(bool bSuccess, const FString& PromptId, FComfyWorkflowParams Params);
-
     void StartGeneration();
     void StartImg2Img();
     void Start360Generation(const FString& SourcePath);
 
-    // -------------------------------------------------------------------------
+    // Workflow patching helpers
+    FString GetUpscalerModel(EUpscaleMode Mode) const;
+    void PatchUpscaler(TSharedPtr<FJsonObject>& WorkflowObj,
+        EUpscaleMode Mode,
+        const FString& UpscaleLoaderNodeId,
+        const FString& UpscaleNodeId,
+        const FString& SaveNodeId,
+        const FString& PreUpscaleOutputNodeId,
+        int32 PreUpscaleOutputSlot) const;
+    void DisableNode(TSharedPtr<FJsonObject>& WorkflowObj, const FString& NodeId) const;
+    void PatchSaveImageInput(TSharedPtr<FJsonObject>& WorkflowObj,
+        const FString& SaveNodeId,
+        const FString& SourceNodeId,
+        int32 SourceSlot) const;
+
     // UI Callbacks
-    // -------------------------------------------------------------------------
     FReply OnGenerateClicked();
     FReply OnImg2ImgBrowseClicked();
     FReply OnImg2ImgClicked();
     FReply OnGenerate360Clicked(FString SourcePath);
     FReply OnApplyToComposureClicked(FString SourcePath);
     FReply OnImportClicked(FString SourcePath);
-
     void OnPromptTextChanged(const FText& NewText);
     void OnNegativePromptTextChanged(const FText& NewText);
-    void OnWidthChanged(TSharedPtr<FString> NewSelection, ESelectInfo::Type SelectInfo);
-    void OnHeightChanged(TSharedPtr<FString> NewSelection, ESelectInfo::Type SelectInfo);
-    void OnCustomWidthChanged(int32 NewValue);
-    void OnCustomHeightChanged(int32 NewValue);
     void OnModelFamilyChanged(TSharedPtr<FString> NewSelection, ESelectInfo::Type SelectInfo);
+    void OnResolutionChanged(TSharedPtr<FResolutionOption> NewSelection, ESelectInfo::Type SelectInfo);
 
-    // -------------------------------------------------------------------------
     // Helpers
-    // -------------------------------------------------------------------------
     void PollComfyConnection();
     void StartHistoryPoller(const FString& PromptId, const FComfyWorkflowParams& Params);
     void StopHistoryPoller();

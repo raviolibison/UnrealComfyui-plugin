@@ -132,15 +132,6 @@
       "title": "Edit Model Reference Method"
     }
   },
-  "181": {
-    "inputs": {
-      "value": 50
-    },
-    "class_type": "PrimitiveInt",
-    "_meta": {
-      "title": "Steps"
-    }
-  },
   "182": {
     "inputs": {
       "value": 4
@@ -152,16 +143,13 @@
   },
   "183": {
     "inputs": {
-      "seed": 1007409132680810,
-      "steps": [
-        "181",
-        0
-      ],
+      "seed": 626163029609055,
+      "steps": 60,
       "cfg": [
         "182",
         0
       ],
-      "sampler_name": "euler",
+      "sampler_name": "res_multistep",
       "scheduler": "simple",
       "denoise": 1,
       "model": [
@@ -221,8 +209,8 @@
   "193": {
     "inputs": {
       "resize_type": "scale dimensions",
-      "resize_type.width": 2048,
-      "resize_type.height": 1024,
+      "resize_type.width": 1024,
+      "resize_type.height": 512,
       "resize_type.crop": "disabled",
       "scale_method": "area",
       "input": [
@@ -251,7 +239,7 @@
   },
   "210": {
     "inputs": {
-      "model_name": "001_classicalSR_DF2K_s64w8_SwinIR-M_x2.pth"
+      "model_name": "RealESRGAN_x2plus.pth"
     },
     "class_type": "UpscaleModelLoader",
     "_meta": {
@@ -274,11 +262,85 @@
       "title": "Upscale Image (using Model)"
     }
   },
-  "212": {
+  "213": {
     "inputs": {
-      "filename_prefix": "360",
       "images": [
         "211",
+        0
+      ]
+    },
+    "class_type": "PreviewImage",
+    "_meta": {
+      "title": "Preview Image"
+    }
+  },
+  "214": {
+    "inputs": {
+      "seed": 367581188317868,
+      "steps": 30,
+      "cfg": 4,
+      "sampler_name": "res_multistep",
+      "scheduler": "simple",
+      "denoise": 0.35,
+      "model": [
+        "174",
+        0
+      ],
+      "positive": [
+        "179",
+        0
+      ],
+      "negative": [
+        "180",
+        0
+      ],
+      "latent_image": [
+        "215",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler"
+    }
+  },
+  "215": {
+    "inputs": {
+      "pixels": [
+        "211",
+        0
+      ],
+      "vae": [
+        "172",
+        0
+      ]
+    },
+    "class_type": "VAEEncode",
+    "_meta": {
+      "title": "VAE Encode"
+    }
+  },
+  "216": {
+    "inputs": {
+      "samples": [
+        "214",
+        0
+      ],
+      "vae": [
+        "172",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "217": {
+    "inputs": {
+      "filename_prefix": "ComfyUI",
+      "images": [
+        "216",
         0
       ]
     },

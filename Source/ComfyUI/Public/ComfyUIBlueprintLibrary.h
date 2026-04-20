@@ -66,6 +66,5 @@ public:
 private:
     static FString GetBaseUrl();
     static void TryEnsurePortable();
-    static FString BuildPromptWrapperJson(const TSharedPtr<FJsonObject>& PromptObject, const FString& ClientId);
     static void PollComfyUIReady(float TimeoutSeconds, float ElapsedTime, const FComfyUIResponseDelegate& OnComplete);
 };

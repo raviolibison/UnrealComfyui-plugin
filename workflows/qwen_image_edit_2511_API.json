@@ -1,11 +1,36 @@
 {
+  "9": {
+    "inputs": {
+      "filename_prefix": "Qwen_Edit_2511",
+      "images": [
+        "188",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  },
   "41": {
     "inputs": {
-      "image": "UE_Editor_00026_.png"
+      "image": "leather_sofa.png"
     },
     "class_type": "LoadImage",
     "_meta": {
       "title": "Load Image"
+    }
+  },
+  "171": {
+    "inputs": {
+      "image": [
+        "41",
+        0
+      ]
+    },
+    "class_type": "FluxKontextImageScale",
+    "_meta": {
+      "title": "FluxKontextImageScale"
     }
   },
   "172": {
@@ -30,7 +55,7 @@
   },
   "174": {
     "inputs": {
-      "unet_name": "qwen_image_edit_2511_fp8mixed.safetensors",
+      "unet_name": "qwen_image_edit_2511_bf16.safetensors",
       "weight_dtype": "default"
     },
     "class_type": "UNETLoader",
@@ -40,7 +65,7 @@
   },
   "175": {
     "inputs": {
-      "prompt": "Create an equirectangular 360 panorama from this image with seamlessly matching edges",
+      "prompt": "",
       "clip": [
         "173",
         0
@@ -50,7 +75,7 @@
         0
       ],
       "image1": [
-        "41",
+        "171",
         0
       ]
     },
@@ -71,7 +96,7 @@
         0
       ],
       "image1": [
-        "41",
+        "171",
         0
       ]
     },
@@ -84,7 +109,7 @@
     "inputs": {
       "shift": 3.1,
       "model": [
-        "205",
+        "174",
         0
       ]
     },
@@ -134,7 +159,7 @@
   },
   "181": {
     "inputs": {
-      "value": 50
+      "value": 40
     },
     "class_type": "PrimitiveInt",
     "_meta": {
@@ -152,7 +177,7 @@
   },
   "183": {
     "inputs": {
-      "seed": 1007409132680810,
+      "seed": 0,
       "steps": [
         "181",
         0
@@ -205,11 +230,7 @@
   "186": {
     "inputs": {
       "pixels": [
-        "193",
-        0
-      ],
-      "vae": [
-        "172",
+        "171",
         0
       ]
     },
@@ -218,38 +239,7 @@
       "title": "VAE Encode"
     }
   },
-  "193": {
-    "inputs": {
-      "resize_type": "scale dimensions",
-      "resize_type.width": 2048,
-      "resize_type.height": 1024,
-      "resize_type.crop": "disabled",
-      "scale_method": "area",
-      "input": [
-        "41",
-        0
-      ]
-    },
-    "class_type": "ResizeImageMaskNode",
-    "_meta": {
-      "title": "Resize Image/Mask"
-    }
-  },
-  "205": {
-    "inputs": {
-      "lora_name": "[Qwen.Image]360viewer_Redmond.safetensors",
-      "strength_model": 1,
-      "model": [
-        "174",
-        0
-      ]
-    },
-    "class_type": "LoraLoaderModelOnly",
-    "_meta": {
-      "title": "Load LoRA"
-    }
-  },
-  "210": {
+  "187": {
     "inputs": {
       "model_name": "001_classicalSR_DF2K_s64w8_SwinIR-M_x2.pth"
     },
@@ -258,10 +248,10 @@
       "title": "Load Upscale Model"
     }
   },
-  "211": {
+  "188": {
     "inputs": {
       "upscale_model": [
-        "210",
+        "187",
         0
       ],
       "image": [
@@ -272,19 +262,6 @@
     "class_type": "ImageUpscaleWithModel",
     "_meta": {
       "title": "Upscale Image (using Model)"
-    }
-  },
-  "212": {
-    "inputs": {
-      "filename_prefix": "360",
-      "images": [
-        "211",
-        0
-      ]
-    },
-    "class_type": "SaveImage",
-    "_meta": {
-      "title": "Save Image"
     }
   }
 }
