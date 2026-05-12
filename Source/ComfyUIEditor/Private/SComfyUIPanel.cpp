@@ -838,6 +838,8 @@ void SComfyUIPanel::SubmitWorkflow(const FComfyWorkflowParams& Params)
     const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&RequestBody);
     FJsonSerializer::Serialize(Wrapper.ToSharedRef(), Writer);
 
+    UE_LOG(LogTemp, Warning, TEXT("ComfyUI POST body: %s"), *RequestBody);
+
     const UComfyUISettings* Settings = GetDefault<UComfyUISettings>();
     FString BaseUrl = Settings ? Settings->BaseUrl : TEXT("http://127.0.0.1:8188");
 
@@ -1115,7 +1117,7 @@ void SComfyUIPanel::StartGeneration()
     WorkflowParams.bAutoImport     = false;
     WorkflowParams.bTargetPreviewB = false;
 
-    const int32 Seed = FMath::Abs((int32)(FDateTime::Now().GetTicks() % MAX_int32));
+    const int64 Seed = FMath::Abs((int64)(FDateTime::Now().GetTicks())) % 1125899906842624LL;
 
     // Shared safe node patcher — uses TryGetObjectField at both levels
     auto TryPatchNode = [](TSharedPtr<FJsonObject>& Workflow,
@@ -1256,7 +1258,7 @@ void SComfyUIPanel::StartImg2Img()
     FString Filename    = FPaths::GetCleanFilename(PreviewImagePathA);
     bool bIsOutput      = PreviewImagePathA.StartsWith(GetLocalTempFolder());
     FString ImageValue  = bIsOutput ? Filename + TEXT(" [output]") : Filename;
-    int32 Seed          = FMath::Abs((int32)(FDateTime::Now().GetTicks() % MAX_int32));
+    int64 Seed = FMath::Abs((int64)(FDateTime::Now().GetTicks())) % 1125899906842624LL;
 
     auto TryPatchNode = [](TSharedPtr<FJsonObject>& Workflow,
                            const FString& NodeId,
@@ -1385,46 +1387,66 @@ void SComfyUIPanel::Start360Generation(const FString& SourcePath)
         return;
     }
 
-    FString Filename   = FPaths::GetCleanFilename(SourcePath);
-    bool bIsOutput     = SourcePath.StartsWith(GetLocalTempFolder());
+    const TSharedPtr<FJsonObject>* Node217 = nullptr;
+    if (WorkflowObj->TryGetObjectField(TEXT("217"), Node217))
+    {
+        FString Node217Str;
+        TSharedRef<TJsonWriter<>> W = TJsonWriterFactory<>::Create(&Node217Str);
+        FJsonSerializer::Serialize((*Node217).ToSharedRef(), W);
+        UE_LOG(LogTemp, Warning, TEXT("ComfyUI 360: Node 217 after load: %s"), *Node217Str);
+    }
+
+    FString Filename = FPaths::GetCleanFilename(SourcePath);
+    bool bIsOutput = SourcePath.StartsWith(GetLocalTempFolder());
     FString ImageValue = bIsOutput ? Filename + TEXT(" [output]") : Filename;
-    int32 Seed         = FMath::Abs((int32)(FDateTime::Now().GetTicks() % MAX_int32));
+    int64 Seed = FMath::Abs((int64)(FDateTime::Now().GetTicks())) % 1125899906842624LL;
+
+    
 
     auto TryPatchNode = [](TSharedPtr<FJsonObject>& Workflow,
-                           const FString& NodeId,
-                           TFunction<void(TSharedPtr<FJsonObject>)> Fn) -> bool
-    {
-        const TSharedPtr<FJsonObject>* NodePtr = nullptr;
-        if (!Workflow->TryGetObjectField(NodeId, NodePtr) || !NodePtr || !NodePtr->IsValid())
-            return false;
-        const TSharedPtr<FJsonObject>* InputsPtr = nullptr;
-        if (!(*NodePtr)->TryGetObjectField(TEXT("inputs"), InputsPtr) || !InputsPtr || !InputsPtr->IsValid())
-            return false;
-        Fn(*InputsPtr);
-        return true;
-    };
+        const FString& NodeId,
+        TFunction<void(TSharedPtr<FJsonObject>)> Fn) -> bool
+        {
+            const TSharedPtr<FJsonObject>* NodePtr = nullptr;
+            if (!Workflow->TryGetObjectField(NodeId, NodePtr) || !NodePtr || !NodePtr->IsValid())
+                return false;
+            const TSharedPtr<FJsonObject>* InputsPtr = nullptr;
+            if (!(*NodePtr)->TryGetObjectField(TEXT("inputs"), InputsPtr) || !InputsPtr || !InputsPtr->IsValid())
+                return false;
+            Fn(*InputsPtr);
+            return true;
+        };
 
+    // Node 41: image input
     TryPatchNode(WorkflowObj, TEXT("41"), [&](TSharedPtr<FJsonObject> In) {
         In->SetStringField(TEXT("image"), ImageValue);
-    });
+        });
+
+    // Node 183: seed
     TryPatchNode(WorkflowObj, TEXT("183"), [&](TSharedPtr<FJsonObject> In) {
         In->SetNumberField(TEXT("seed"), Seed);
-    });
-    TryPatchNode(WorkflowObj, TEXT("214"), [&](TSharedPtr<FJsonObject> In) {
-        In->SetNumberField(TEXT("seed"), Seed + 1);
-    });
+        });
+
+    // Node 217: filename prefix
     TryPatchNode(WorkflowObj, TEXT("217"), [&](TSharedPtr<FJsonObject> In) {
         In->SetStringField(TEXT("filename_prefix"), TEXT("360"));
-    });
+        });
 
     FComfyWorkflowParams WorkflowParams;
-    WorkflowParams.WorkflowJson   = SerializeWorkflow(WorkflowObj);
-    WorkflowParams.OutputPrefix   = TEXT("360_Qwen");
-    WorkflowParams.RunningStatus  = TEXT("Generating 360\u00b0 panorama...");
+    WorkflowParams.WorkflowJson = SerializeWorkflow(WorkflowObj);
+    WorkflowParams.OutputPrefix = TEXT("360");
+    WorkflowParams.RunningStatus = TEXT("Generating 360\u00b0 panorama...");
     WorkflowParams.CompleteStatus = TEXT("360\u00b0 HDRI generated!");
     WorkflowParams.bUpdatePreview = false;
-    WorkflowParams.bAutoImport    = false;
+    WorkflowParams.bAutoImport = false;
     WorkflowParams.bConvertToHDRI = true;
+
+    UE_LOG(LogTemp, Warning, TEXT("ComfyUI 360: SourcePath = %s"), *SourcePath);
+    UE_LOG(LogTemp, Warning, TEXT("ComfyUI 360: Filename = %s"), *Filename);
+    UE_LOG(LogTemp, Warning, TEXT("ComfyUI 360: ImageValue = %s"), *ImageValue);
+
+    UE_LOG(LogTemp, Warning, TEXT("ComfyUI 360: Submitting workflow JSON:"));
+    UE_LOG(LogTemp, Warning, TEXT("%s"), *WorkflowParams.WorkflowJson);
 
     SubmitWorkflow(WorkflowParams);
 }

@@ -114,7 +114,7 @@
   "10": {
     "inputs": {
       "image": [
-        "32",
+        "37",
         0
       ]
     },
@@ -202,7 +202,7 @@
   "15": {
     "inputs": {
       "pixels": [
-        "32",
+        "37",
         0
       ],
       "vae": [
@@ -231,36 +231,6 @@
     "class_type": "UpscaleModelLoader",
     "_meta": {
       "title": "Load Upscale Model"
-    }
-  },
-  "19": {
-    "inputs": {
-      "rgthree_comparer": {
-        "images": [
-          {
-            "name": "A",
-            "selected": true,
-            "url": "/api/view?filename=rgthree.compare._temp_jleen_00125_.png&type=temp&subfolder=&rand=0.3216985136448698"
-          },
-          {
-            "name": "B",
-            "selected": true,
-            "url": "/api/view?filename=rgthree.compare._temp_jleen_00126_.png&type=temp&subfolder=&rand=0.7991412317256843"
-          }
-        ]
-      },
-      "image_a": [
-        "20",
-        0
-      ],
-      "image_b": [
-        "32",
-        0
-      ]
-    },
-    "class_type": "Image Comparer (rgthree)",
-    "_meta": {
-      "title": "Image Comparer (rgthree)"
     }
   },
   "20": {
@@ -323,25 +293,26 @@
       "title": "ReferenceLatent"
     }
   },
-  "31": {
-    "inputs": {
-      "upscale_method": "nearest-exact",
-      "megapixels": 1,
-      "resolution_steps": 1
-    },
-    "class_type": "ImageScaleToTotalPixels",
-    "_meta": {
-      "title": "ImageScaleToTotalPixels"
-    }
-  },
   "32": {
     "inputs": {
-      "image": "ComfyUI_00142_.png [output]",
+      "image": "Edit_00015_.png [output]",
       "refresh": "refresh"
     },
     "class_type": "LoadImageOutput",
     "_meta": {
       "title": "Load Image (from Outputs)"
+    }
+  },
+  "37": {
+    "inputs": {
+      "image": [
+        "32",
+        0
+      ]
+    },
+    "class_type": "FluxKontextImageScale",
+    "_meta": {
+      "title": "FluxKontextImageScale"
     }
   }
 }
